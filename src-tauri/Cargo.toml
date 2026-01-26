@@ -1,0 +1,46 @@
+[package]
+name = "mailclient"
+version = "0.1.0"
+description = "E-Mail Client für MailCow"
+authors = [""]
+edition = "2021"
+
+[lib]
+name = "mailclient_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures = "0.3"
+# IMAP support
+async-imap = "0.10"
+imap-proto = "0.16"
+async-native-tls = "0.5"
+native-tls = "0.2"
+tokio-native-tls = "0.3"
+# SMTP support
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
+# For email parsing
+mailparse = "0.15"
+# Base64 encoding
+base64 = "0.22"
+# HTML sanitization
+ammonia = "4"
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+# HTTP client for autoconfig
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+# XML parsing for autoconfig
+quick-xml = { version = "0.37", features = ["serialize"] }
+# Directory paths
+dirs = "5"
+# SQLite for email caching
+rusqlite = { version = "0.32", features = ["bundled"] }
