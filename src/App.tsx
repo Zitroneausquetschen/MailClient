@@ -7,25 +7,43 @@ import EmailView from "./components/EmailView";
 import Composer from "./components/Composer";
 import AccountSidebar from "./components/AccountSidebar";
 import SieveEditor from "./components/SieveEditor";
+import ContactsView from "./components/ContactsView";
+import CalendarView from "./components/CalendarView";
+import TasksView from "./components/TasksView";
+import NotesView from "./components/NotesView";
 import AccountSettings from "./components/AccountSettings";
-import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount } from "./types/mail";
+import MainNavigation from "./components/MainNavigation";
+import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
+import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
+import { openComposerWindow } from "./utils/windows";
 
-type View = "inbox" | "compose" | "add-account" | "sieve" | "settings";
+type MainTab = "email" | "calendar" | "contacts" | "tasks" | "notes";
+type EmailSubView = "inbox" | "compose" | "sieve";
 
 function App() {
+  // Main tab state
+  const [mainTab, setMainTab] = useState<MainTab>("email");
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Account state
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
+  const [activeAccountCredentials, setActiveAccountCredentials] = useState<MailAccount | null>(null);
+  const [activeAccountSettings, setActiveAccountSettings] = useState<SavedAccount | null>(null);
+
+  // Email view state
+  const [emailSubView, setEmailSubView] = useState<EmailSubView>("inbox");
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<string>("INBOX");
   const [emails, setEmails] = useState<EmailHeader[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
-  const [currentView, setCurrentView] = useState<View>("inbox");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<Email | null>(null);
-  const [activeAccountCredentials, setActiveAccountCredentials] = useState<MailAccount | null>(null);
+
+  // Sync state
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{
     total: number;
@@ -33,13 +51,29 @@ function App() {
     currentItem: string;
     folder: string;
   } | null>(null);
-  const [activeAccountSettings, setActiveAccountSettings] = useState<SavedAccount | null>(null);
+
+  // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<EmailHeader[] | null>(null);
   const [searching, setSearching] = useState(false);
+
+  // New email notification
   const [newEmailCount, setNewEmailCount] = useState(0);
   const lastKnownUidRef = useRef<number>(0);
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    email: EmailHeader;
+  } | null>(null);
+
+  // Pending rule from context menu
+  const [pendingRule, setPendingRule] = useState<SieveRule | null>(null);
+
+  // Composer window preference
+  const [openComposerInNewWindow, setOpenComposerInNewWindow] = useState(false);
 
   // Helper to set error and play sound
   const showError = (message: string) => {
@@ -71,12 +105,10 @@ function App() {
 
             const connectedAccount = await invoke<ConnectedAccount>("connect", { account });
 
-            // Only add if not already in the list
             if (!newConnectedAccounts.find(a => a.id === connectedAccount.id)) {
               newConnectedAccounts.push(connectedAccount);
             }
 
-            // Store first account credentials for Sieve
             if (!firstAccount) {
               firstAccount = account;
               setActiveAccountCredentials(account);
@@ -87,10 +119,8 @@ function App() {
           }
         }
 
-        // Set all connected accounts at once (prevents duplicates from multiple renders)
         setConnectedAccounts(newConnectedAccounts);
 
-        // Set first account as active
         if (newConnectedAccounts.length > 0) {
           setActiveAccountId(newConnectedAccounts[0].id);
         }
@@ -113,30 +143,27 @@ function App() {
     }
   }, [activeAccountId, initializing]);
 
-  // Polling for new emails (check every 60 seconds)
+  // Polling for new emails
   useEffect(() => {
     if (!activeAccountId || initializing) return;
 
     const checkForNewEmails = async () => {
       try {
-        // Only check INBOX for new emails
         const headers = await invoke<EmailHeader[]>("fetch_headers", {
           accountId: activeAccountId,
           folder: "INBOX",
           start: 0,
-          count: 5, // Just check the latest few
+          count: 5,
         });
 
         if (headers.length > 0) {
           const highestUid = Math.max(...headers.map(h => h.uid));
 
-          // If we have a previous UID and new one is higher, we have new mail
           if (lastKnownUidRef.current > 0 && highestUid > lastKnownUidRef.current) {
             const newCount = headers.filter(h => h.uid > lastKnownUidRef.current).length;
             setNewEmailCount(newCount);
             playReceivedSound();
 
-            // Update email list if we're viewing INBOX
             if (selectedFolder === "INBOX") {
               setEmails(prev => {
                 const newEmails = headers.filter(h => !prev.find(e => e.uid === h.uid));
@@ -152,10 +179,7 @@ function App() {
       }
     };
 
-    // Initial check to set the baseline UID
     checkForNewEmails();
-
-    // Set up polling interval (60 seconds)
     pollingIntervalRef.current = setInterval(checkForNewEmails, 60000);
 
     return () => {
@@ -171,12 +195,10 @@ function App() {
     try {
       const connectedAccount = await invoke<ConnectedAccount>("connect", { account });
       setConnectedAccounts((prev) => [...prev, connectedAccount]);
-      setCurrentView("inbox");
+      setEmailSubView("inbox");
 
-      // Store credentials for Sieve access
       setActiveAccountCredentials(account);
 
-      // Load folders and emails for the new account
       await loadFolders(connectedAccount.id);
       await loadEmails(connectedAccount.id, "INBOX");
       setSelectedFolder("INBOX");
@@ -193,7 +215,6 @@ function App() {
       await invoke("disconnect", { accountId });
       setConnectedAccounts((prev) => prev.filter((a) => a.id !== accountId));
 
-      // If disconnecting active account, switch to another or show login
       if (activeAccountId === accountId) {
         const remaining = connectedAccounts.filter((a) => a.id !== accountId);
         if (remaining.length > 0) {
@@ -210,28 +231,13 @@ function App() {
     }
   };
 
-  const handleDisconnectAll = async () => {
-    try {
-      await invoke("disconnect_all");
-      setConnectedAccounts([]);
-      setActiveAccountId(null);
-      setFolders([]);
-      setEmails([]);
-      setSelectedEmail(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
-
   const switchAccount = async (accountId: string) => {
     setActiveAccountId(accountId);
     setSelectedEmail(null);
-    clearSearch(); // Clear search when switching accounts
+    clearSearch();
 
-    // Load account settings for cache configuration
     try {
       const savedAccounts = await invoke<SavedAccount[]>("get_saved_accounts");
-      // Match by id or username (id might be the username in some cases)
       const accountSettings = savedAccounts.find(a => a.id === accountId || a.username === accountId);
       if (accountSettings) {
         setActiveAccountSettings(accountSettings);
@@ -258,10 +264,8 @@ function App() {
     setSelectedFolder(folder);
     setSelectedEmail(null);
 
-    // Check if cache is enabled for this account
     const isCacheEnabled = activeAccountSettings?.cache_enabled ?? false;
 
-    // First, try to load from cache for instant display
     if (isCacheEnabled) {
       try {
         const cachedHeaders = await invoke<EmailHeader[]>("get_cached_headers", {
@@ -278,7 +282,6 @@ function App() {
       }
     }
 
-    // Then fetch from server
     setLoading(true);
     try {
       const headers = await invoke<EmailHeader[]>("fetch_headers", {
@@ -289,7 +292,6 @@ function App() {
       });
       setEmails(headers);
 
-      // Store in cache if enabled
       if (isCacheEnabled && headers.length > 0) {
         setSyncing(true);
         setSyncProgress({
@@ -300,11 +302,9 @@ function App() {
         });
         try {
           await invoke("cache_headers", { accountId, folder, headers });
-          // Update sync state with highest UID
           const highestUid = Math.max(...headers.map(h => h.uid));
           await invoke("set_cache_sync_state", { accountId, folder, highestUid });
 
-          // If cache_body is enabled, cache full emails
           if (activeAccountSettings?.cache_body) {
             await cacheEmailBodies(accountId, folder, headers);
           }
@@ -316,7 +316,6 @@ function App() {
         }
       }
     } catch (e) {
-      // If server fetch fails and we have cached data, keep showing it
       if (emails.length === 0) {
         setError(String(e));
       } else {
@@ -327,14 +326,12 @@ function App() {
     }
   };
 
-  // Function to cache email bodies with progress reporting
   const cacheEmailBodies = async (accountId: string, folder: string, headers: EmailHeader[]) => {
-    const emailsToCache = headers.slice(0, 50); // Cache up to 50 emails
+    const emailsToCache = headers.slice(0, 50);
     let completed = 0;
 
     for (const header of emailsToCache) {
       try {
-        // Update progress
         setSyncProgress({
           total: emailsToCache.length,
           completed,
@@ -342,7 +339,6 @@ function App() {
           folder,
         });
 
-        // Check if already cached
         const hasCachedBody = await invoke<boolean>("has_cached_email_body", {
           accountId,
           folder,
@@ -382,7 +378,6 @@ function App() {
 
     if (!activeAccountId) return;
 
-    // Only search if cache is enabled
     if (!activeAccountSettings?.cache_enabled) {
       setError("Suche erfordert aktivierten Cache. Bitte in den Einstellungen aktivieren.");
       return;
@@ -408,7 +403,6 @@ function App() {
     setSearchResults(null);
   };
 
-  // Manual sync function - syncs important folders
   const handleManualSync = async () => {
     if (!activeAccountId || syncing) return;
 
@@ -421,16 +415,13 @@ function App() {
     setSyncing(true);
 
     try {
-      // Sync important folders: INBOX, Sent, current folder
       const foldersToSync: Folder[] = [];
 
-      // Add INBOX first
       const inbox = folders.find(f => f.name === "INBOX");
       if (inbox) {
         foldersToSync.push(inbox);
       }
 
-      // Add Sent/Gesendet folders
       const sentFolders = folders.filter(f =>
         f.name.toLowerCase().includes("sent") ||
         f.name.toLowerCase().includes("gesendet")
@@ -441,7 +432,6 @@ function App() {
         }
       }
 
-      // Add current folder if not already in list
       const currentFolder = folders.find(f => f.name === selectedFolder);
       if (currentFolder && !foldersToSync.find(f => f.name === currentFolder.name)) {
         foldersToSync.push(currentFolder);
@@ -456,29 +446,24 @@ function App() {
           folder: folderName,
         });
 
-        // Fetch headers from server
         const headers = await invoke<EmailHeader[]>("fetch_headers", {
           accountId: activeAccountId,
           folder: folderName,
           start: 0,
-          count: 100, // Sync more emails for full sync
+          count: 100,
         });
 
         if (headers.length > 0) {
-          // Cache headers
           await invoke("cache_headers", { accountId: activeAccountId, folder: folderName, headers });
 
-          // Update sync state
           const highestUid = Math.max(...headers.map(h => h.uid));
           await invoke("set_cache_sync_state", { accountId: activeAccountId, folder: folderName, highestUid });
 
-          // Cache email bodies if enabled
           if (activeAccountSettings?.cache_body) {
             await cacheEmailBodies(activeAccountId, folderName, headers);
           }
         }
 
-        // Update UI if this is the currently selected folder
         if (folderName === selectedFolder) {
           setEmails(headers);
         }
@@ -493,7 +478,7 @@ function App() {
 
   const handleSelectFolder = async (folder: string) => {
     if (activeAccountId) {
-      clearSearch(); // Clear search when switching folders
+      clearSearch();
       await loadEmails(activeAccountId, folder);
     }
   };
@@ -503,7 +488,6 @@ function App() {
 
     const isCacheEnabled = activeAccountSettings?.cache_enabled ?? false;
 
-    // First, try to load from cache for instant display
     if (isCacheEnabled) {
       try {
         const cachedEmail = await invoke<Email | null>("get_cached_email", {
@@ -513,7 +497,6 @@ function App() {
         });
         if (cachedEmail && cachedEmail.bodyText) {
           setSelectedEmail(cachedEmail);
-          // Mark as read in UI immediately
           setEmails((prev) =>
             prev.map((e) => (e.uid === uid ? { ...e, isRead: true } : e))
           );
@@ -532,7 +515,6 @@ function App() {
       });
       setSelectedEmail(email);
 
-      // Mark as read on server
       const header = emails.find((e) => e.uid === uid);
       if (header && !header.isRead) {
         await invoke("mark_read", { accountId: activeAccountId, folder: selectedFolder, uid });
@@ -540,7 +522,6 @@ function App() {
           prev.map((e) => (e.uid === uid ? { ...e, isRead: true } : e))
         );
 
-        // Update cache read status
         if (isCacheEnabled) {
           await invoke("update_cache_read_status", {
             accountId: activeAccountId,
@@ -551,7 +532,6 @@ function App() {
         }
       }
 
-      // Cache the full email if enabled
       if (isCacheEnabled) {
         await invoke("cache_email", {
           accountId: activeAccountId,
@@ -560,7 +540,6 @@ function App() {
         }).catch(console.error);
       }
     } catch (e) {
-      // If we already showed cached email, don't show error
       if (!selectedEmail || selectedEmail.uid !== uid) {
         setError(String(e));
       }
@@ -578,7 +557,6 @@ function App() {
         setSelectedEmail(null);
       }
 
-      // Also delete from cache
       if (activeAccountSettings?.cache_enabled) {
         await invoke("delete_cached_email", {
           accountId: activeAccountId,
@@ -605,7 +583,6 @@ function App() {
         setSelectedEmail(null);
       }
 
-      // Also delete from cache (will be re-cached when target folder is opened)
       if (activeAccountSettings?.cache_enabled) {
         await invoke("delete_cached_email", {
           accountId: activeAccountId,
@@ -626,12 +603,12 @@ function App() {
       console.log("[Frontend] Calling invoke send_email...");
       await invoke("send_email", { accountId: activeAccountId, email });
       console.log("[Frontend] send_email returned successfully");
-      playSentSound(); // Play success sound
-      setCurrentView("inbox");
+      playSentSound();
+      setEmailSubView("inbox");
       setReplyTo(null);
     } catch (e) {
       console.error("[Frontend] send_email error:", e);
-      playErrorSound(); // Play error sound
+      playErrorSound();
       setError(String(e));
       throw e;
     } finally {
@@ -641,19 +618,97 @@ function App() {
 
   const handleReply = (email: Email) => {
     setReplyTo(email);
-    setCurrentView("compose");
+    if (openComposerInNewWindow && activeAccountId) {
+      openComposerWindow(activeAccountId, email);
+    } else {
+      setEmailSubView("compose");
+    }
   };
 
   const handleCompose = () => {
     setReplyTo(null);
-    setCurrentView("compose");
+    if (openComposerInNewWindow && activeAccountId) {
+      openComposerWindow(activeAccountId);
+    } else {
+      setEmailSubView("compose");
+    }
   };
 
   const handleAddAccount = () => {
-    setCurrentView("add-account");
+    // Switch to settings to add account
+    setShowSettings(true);
   };
 
-  // Reload account settings (called when returning from settings view)
+  const extractEmailAddress = (from: string): string => {
+    const match = from.match(/<(.+)>/);
+    return match ? match[1] : from;
+  };
+
+  const handleCreateRuleFromEmail = (email: EmailHeader) => {
+    const senderEmail = extractEmailAddress(email.from);
+    const newRule: SieveRule = {
+      id: crypto.randomUUID(),
+      name: `Regel fuer ${senderEmail}`,
+      enabled: true,
+      conditions: [
+        {
+          field: "from",
+          operator: "contains",
+          value: senderEmail,
+        }
+      ],
+      actions: [
+        {
+          actionType: "fileinto",
+          value: "INBOX",
+        }
+      ],
+    };
+    setPendingRule(newRule);
+    setEmailSubView("sieve");
+  };
+
+  const getContextMenuItems = (email: EmailHeader): ContextMenuItem[] => {
+    return [
+      {
+        label: "Oeffnen",
+        icon: "M",
+        onClick: () => handleSelectEmail(email.uid),
+      },
+      {
+        label: "Antworten",
+        icon: "A",
+        onClick: async () => {
+          const fullEmail = await invoke<Email>("fetch_email", {
+            accountId: activeAccountId,
+            folder: selectedFolder,
+            uid: email.uid,
+          });
+          handleReply(fullEmail);
+        },
+      },
+      { label: "", onClick: () => {}, separator: true },
+      {
+        label: "In Ordner verschieben",
+        icon: "O",
+        onClick: () => {
+          handleSelectEmail(email.uid);
+        },
+      },
+      {
+        label: "Loeschen",
+        icon: "L",
+        onClick: () => handleDeleteEmail(email.uid),
+      },
+      { label: "", onClick: () => {}, separator: true },
+      {
+        label: "Regel erstellen...",
+        icon: "R",
+        onClick: () => handleCreateRuleFromEmail(email),
+      },
+    ];
+  };
+
   const reloadActiveAccountSettings = async () => {
     if (!activeAccountId) return;
     try {
@@ -668,9 +723,23 @@ function App() {
   };
 
   const handleCloseSettings = () => {
-    setCurrentView("inbox");
-    // Reload settings in case user changed them
+    setShowSettings(false);
     reloadActiveAccountSettings();
+  };
+
+  // Handle main tab changes
+  const handleMainTabChange = (tab: string) => {
+    setMainTab(tab as MainTab);
+    setShowSettings(false);
+    // Reset email subview when switching to email tab
+    if (tab === "email") {
+      setEmailSubView("inbox");
+    }
+  };
+
+  // Handle settings click
+  const handleSettingsClick = () => {
+    setShowSettings(true);
   };
 
   // Show loading while initializing
@@ -686,7 +755,7 @@ function App() {
   }
 
   // No accounts connected - show login
-  if (connectedAccounts.length === 0 && currentView !== "add-account") {
+  if (connectedAccounts.length === 0 && !showSettings) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-100">
         <ConnectionForm onConnect={handleConnect} loading={loading} error={error} />
@@ -694,268 +763,322 @@ function App() {
     );
   }
 
-  // Adding account view
-  if (currentView === "add-account") {
-    return (
-      <div className="h-full flex items-center justify-center bg-gray-100">
-        <div className="relative">
-          {connectedAccounts.length > 0 && (
-            <button
-              onClick={() => setCurrentView("inbox")}
-              className="absolute -top-12 left-0 text-gray-600 hover:text-gray-800"
-            >
-              &larr; Zurück
-            </button>
-          )}
-          <ConnectionForm onConnect={handleConnect} loading={loading} error={error} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="h-full flex flex-col bg-gray-100">
-      {/* Header */}
-      <header className="bg-white border-b px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold text-gray-800">MailClient</h1>
-          {newEmailCount > 0 && (
-            <button
-              onClick={() => {
-                setNewEmailCount(0);
-                if (selectedFolder !== "INBOX") {
-                  handleSelectFolder("INBOX");
-                }
-              }}
-              className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white text-xs rounded-full hover:bg-blue-600 transition-colors"
-              title="Neue E-Mails anzeigen"
-            >
-              <span>{newEmailCount} neue</span>
-            </button>
-          )}
-        </div>
+      {/* Main Navigation */}
+      <MainNavigation
+        activeTab={mainTab}
+        onTabChange={handleMainTabChange}
+        onSettingsClick={handleSettingsClick}
+        isSettingsActive={showSettings}
+      />
 
-        {/* Search Bar */}
-        <div className="flex-1 max-w-md mx-4">
-          <div className="relative">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => handleSearch(e.target.value)}
-              placeholder="E-Mails durchsuchen..."
-              className="w-full px-4 py-2 pl-10 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={!activeAccountSettings?.cache_enabled}
-              title={!activeAccountSettings?.cache_enabled ? "Cache muss aktiviert sein für die Suche" : ""}
-            />
-            <svg
-              className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-            {searchQuery && (
-              <button
-                onClick={clearSearch}
-                className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-            {searching && (
-              <div className="absolute right-10 top-2.5">
-                <svg className="animate-spin h-5 w-5 text-blue-500" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
+      {/* Content based on main tab */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {mainTab === "email" && !showSettings && (
+          <>
+            {/* Email Sub-Header/Toolbar */}
+            <header className="bg-white border-b px-4 py-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {newEmailCount > 0 && (
+                  <button
+                    onClick={() => {
+                      setNewEmailCount(0);
+                      if (selectedFolder !== "INBOX") {
+                        handleSelectFolder("INBOX");
+                      }
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white text-xs rounded-full hover:bg-blue-600 transition-colors"
+                    title="Neue E-Mails anzeigen"
+                  >
+                    <span>{newEmailCount} neue</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Search Bar */}
+              <div className="flex-1 max-w-md mx-4">
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => handleSearch(e.target.value)}
+                    placeholder="E-Mails durchsuchen..."
+                    className="w-full px-4 py-1.5 pl-10 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    disabled={!activeAccountSettings?.cache_enabled}
+                    title={!activeAccountSettings?.cache_enabled ? "Cache muss aktiviert sein fuer die Suche" : ""}
+                  />
+                  <svg
+                    className="absolute left-3 top-2 h-4 w-4 text-gray-400"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                  {searchQuery && (
+                    <button
+                      onClick={clearSearch}
+                      className="absolute right-3 top-2 text-gray-400 hover:text-gray-600"
+                    >
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                  {searching && (
+                    <div className="absolute right-10 top-2">
+                      <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Sync Progress Bar */}
+                {syncing && syncProgress && (
+                  <div className="flex items-center gap-2 bg-blue-50 px-2 py-1 rounded border border-blue-200 text-sm">
+                    <svg className="animate-spin h-4 w-4 text-blue-600" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="text-blue-700">{syncProgress.folder}</span>
+                    <div className="w-20 h-1.5 bg-blue-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-600 transition-all duration-300"
+                        style={{ width: `${(syncProgress.completed / syncProgress.total) * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-blue-600">{syncProgress.completed}/{syncProgress.total}</span>
+                  </div>
+                )}
+                {/* Sync Button */}
+                {activeAccountSettings?.cache_enabled && !syncing && (
+                  <button
+                    onClick={handleManualSync}
+                    className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                    title="E-Mails synchronisieren"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                )}
+
+                {/* Compose Button with Dropdown */}
+                <div className="relative group">
+                  <button
+                    onClick={handleCompose}
+                    className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 flex items-center gap-1"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Neue E-Mail
+                  </button>
+                  {/* Dropdown for window options */}
+                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                    <button
+                      onClick={() => {
+                        setOpenComposerInNewWindow(false);
+                        handleCompose();
+                      }}
+                      className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 ${!openComposerInNewWindow ? 'text-blue-600' : 'text-gray-700'}`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Im Hauptfenster
+                    </button>
+                    <button
+                      onClick={() => {
+                        setOpenComposerInNewWindow(true);
+                        if (activeAccountId) {
+                          openComposerWindow(activeAccountId);
+                        }
+                      }}
+                      className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center gap-2 ${openComposerInNewWindow ? 'text-blue-600' : 'text-gray-700'}`}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                      Neues Fenster
+                    </button>
+                  </div>
+                </div>
+
+                {activeAccountCredentials && (
+                  <button
+                    onClick={() => setEmailSubView("sieve")}
+                    className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
+                    title="Sieve Filterregeln"
+                  >
+                    Filter
+                  </button>
+                )}
+              </div>
+            </header>
+
+            {/* Error banner */}
+            {error && (
+              <div className="bg-red-100 border-b border-red-200 px-4 py-2 text-red-700 flex items-center justify-between">
+                <span>{error}</span>
+                <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+                  X
+                </button>
               </div>
             )}
-          </div>
-        </div>
 
-        <div className="flex items-center gap-4">
-          {/* Sync Progress Bar */}
-          {syncing && syncProgress && (
-            <div className="flex items-center gap-3 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200">
-              <div className="flex items-center gap-2">
-                <svg className="animate-spin h-4 w-4 text-blue-600" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                </svg>
-                <span className="text-sm text-blue-700 font-medium">
-                  Synchronisiere {syncProgress.folder}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-32 h-2 bg-blue-200 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-blue-600 transition-all duration-300"
-                    style={{ width: `${(syncProgress.completed / syncProgress.total) * 100}%` }}
+            {/* Email Content */}
+            <div className="flex-1 flex overflow-hidden">
+              {emailSubView === "inbox" ? (
+                <>
+                  {/* Account sidebar */}
+                  <AccountSidebar
+                    accounts={connectedAccounts}
+                    activeAccountId={activeAccountId}
+                    onSelectAccount={switchAccount}
+                    onAddAccount={handleAddAccount}
+                    onRemoveAccount={handleDisconnect}
+                  />
+
+                  {/* Folder list */}
+                  <div className="w-48 bg-white border-r overflow-y-auto">
+                    <FolderList
+                      folders={folders}
+                      selectedFolder={selectedFolder}
+                      onSelectFolder={handleSelectFolder}
+                    />
+                  </div>
+
+                  {/* Email list */}
+                  <div className="w-80 bg-white border-r overflow-y-auto flex flex-col">
+                    {searchResults !== null && (
+                      <div className="px-4 py-2 bg-blue-50 border-b flex items-center justify-between">
+                        <span className="text-sm text-blue-700">
+                          {searchResults.length} Ergebnis{searchResults.length !== 1 ? "se" : ""} fuer "{searchQuery}"
+                        </span>
+                        <button
+                          onClick={clearSearch}
+                          className="text-blue-600 hover:text-blue-800 text-sm"
+                        >
+                          Zurueck
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex-1 overflow-y-auto">
+                      <EmailList
+                        emails={searchResults !== null ? searchResults : emails}
+                        selectedUid={selectedEmail?.uid}
+                        onSelectEmail={handleSelectEmail}
+                        onContextMenu={(email, x, y) => setContextMenu({ email, x, y })}
+                        loading={loading || searching}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Email view */}
+                  <div className="flex-1 bg-white overflow-y-auto">
+                    {selectedEmail ? (
+                      <EmailView
+                        email={selectedEmail}
+                        folders={folders}
+                        onReply={handleReply}
+                        onDelete={() => handleDeleteEmail(selectedEmail.uid)}
+                        onMove={(folder) => handleMoveEmail(selectedEmail.uid, folder)}
+                      />
+                    ) : (
+                      <div className="h-full flex items-center justify-center text-gray-400">
+                        Waehle eine E-Mail aus
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : emailSubView === "compose" ? (
+                <div className="flex-1 bg-white overflow-y-auto">
+                  <Composer
+                    replyTo={replyTo}
+                    onSend={handleSendEmail}
+                    onCancel={() => {
+                      setEmailSubView("inbox");
+                      setReplyTo(null);
+                    }}
+                    loading={loading}
+                    currentAccount={activeAccountSettings}
                   />
                 </div>
-                <span className="text-xs text-blue-600 min-w-[3rem]">
-                  {syncProgress.completed}/{syncProgress.total}
-                </span>
-              </div>
-              <span className="text-xs text-gray-500 max-w-[150px] truncate" title={syncProgress.currentItem}>
-                {syncProgress.currentItem}
-              </span>
-            </div>
-          )}
-          {/* Sync Button */}
-          {activeAccountSettings?.cache_enabled && !syncing && (
-            <button
-              onClick={handleManualSync}
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-              title="E-Mails synchronisieren"
-            >
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
-          )}
-          <button
-            onClick={handleCompose}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Neue E-Mail
-          </button>
-          {activeAccountCredentials && (
-            <button
-              onClick={() => setCurrentView("sieve")}
-              className="px-4 py-2 text-gray-600 hover:text-gray-800"
-              title="Sieve Filterregeln"
-            >
-              Filter
-            </button>
-          )}
-          <button
-            onClick={() => setCurrentView("settings")}
-            className="px-4 py-2 text-gray-600 hover:text-gray-800"
-            title="Konto-Einstellungen"
-          >
-            Einstellungen
-          </button>
-          <button
-            onClick={handleDisconnectAll}
-            className="px-4 py-2 text-gray-600 hover:text-gray-800"
-          >
-            Abmelden
-          </button>
-        </div>
-      </header>
-
-      {/* Error banner */}
-      {error && (
-        <div className="bg-red-100 border-b border-red-200 px-4 py-2 text-red-700 flex items-center justify-between">
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
-            &times;
-          </button>
-        </div>
-      )}
-
-      {/* Main content */}
-      <div className="flex-1 flex overflow-hidden">
-        {currentView === "inbox" ? (
-          <>
-            {/* Account sidebar */}
-            <AccountSidebar
-              accounts={connectedAccounts}
-              activeAccountId={activeAccountId}
-              onSelectAccount={switchAccount}
-              onAddAccount={handleAddAccount}
-              onRemoveAccount={handleDisconnect}
-            />
-
-            {/* Folder list */}
-            <div className="w-48 bg-white border-r overflow-y-auto">
-              <FolderList
-                folders={folders}
-                selectedFolder={selectedFolder}
-                onSelectFolder={handleSelectFolder}
-              />
-            </div>
-
-            {/* Email list */}
-            <div className="w-80 bg-white border-r overflow-y-auto flex flex-col">
-              {/* Search results header */}
-              {searchResults !== null && (
-                <div className="px-4 py-2 bg-blue-50 border-b flex items-center justify-between">
-                  <span className="text-sm text-blue-700">
-                    {searchResults.length} Ergebnis{searchResults.length !== 1 ? "se" : ""} für "{searchQuery}"
-                  </span>
-                  <button
-                    onClick={clearSearch}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
-                    Zurück
-                  </button>
+              ) : emailSubView === "sieve" && activeAccountCredentials ? (
+                <div className="flex-1 bg-white overflow-y-auto">
+                  <SieveEditor
+                    host={activeAccountCredentials.imapHost}
+                    username={activeAccountCredentials.username}
+                    password={activeAccountCredentials.password}
+                    folders={folders}
+                    onClose={() => {
+                      setEmailSubView("inbox");
+                      setPendingRule(null);
+                    }}
+                    pendingRule={pendingRule}
+                    onPendingRuleHandled={() => setPendingRule(null)}
+                  />
                 </div>
-              )}
-              <div className="flex-1 overflow-y-auto">
-                <EmailList
-                  emails={searchResults !== null ? searchResults : emails}
-                  selectedUid={selectedEmail?.uid}
-                  onSelectEmail={handleSelectEmail}
-                  loading={loading || searching}
-                />
-              </div>
-            </div>
-
-            {/* Email view */}
-            <div className="flex-1 bg-white overflow-y-auto">
-              {selectedEmail ? (
-                <EmailView
-                  email={selectedEmail}
-                  folders={folders}
-                  onReply={handleReply}
-                  onDelete={() => handleDeleteEmail(selectedEmail.uid)}
-                  onMove={(folder) => handleMoveEmail(selectedEmail.uid, folder)}
-                />
-              ) : (
-                <div className="h-full flex items-center justify-center text-gray-400">
-                  Wähle eine E-Mail aus
-                </div>
-              )}
+              ) : null}
             </div>
           </>
-        ) : currentView === "compose" ? (
+        )}
+
+        {mainTab === "calendar" && !showSettings && activeAccountSettings && (
           <div className="flex-1 bg-white overflow-y-auto">
-            <Composer
-              replyTo={replyTo}
-              onSend={handleSendEmail}
-              onCancel={() => {
-                setCurrentView("inbox");
-                setReplyTo(null);
-              }}
-              loading={loading}
+            <CalendarView currentAccount={activeAccountSettings} />
+          </div>
+        )}
+
+        {mainTab === "contacts" && !showSettings && activeAccountSettings && (
+          <div className="flex-1 bg-white overflow-y-auto">
+            <ContactsView
+              currentAccount={activeAccountSettings}
+              onClose={() => setMainTab("email")}
             />
           </div>
-        ) : currentView === "sieve" && activeAccountCredentials ? (
+        )}
+
+        {mainTab === "tasks" && !showSettings && (
           <div className="flex-1 bg-white overflow-y-auto">
-            <SieveEditor
-              host={activeAccountCredentials.imapHost}
-              username={activeAccountCredentials.username}
-              password={activeAccountCredentials.password}
-              folders={folders}
-              onClose={() => setCurrentView("inbox")}
-            />
+            <TasksView currentAccount={activeAccountSettings} />
           </div>
-        ) : currentView === "settings" ? (
+        )}
+
+        {mainTab === "notes" && !showSettings && (
+          <div className="flex-1 bg-white overflow-y-auto">
+            <NotesView currentAccount={activeAccountSettings} />
+          </div>
+        )}
+
+        {/* Settings View (shown on top of other views) */}
+        {showSettings && (
           <div className="flex-1 bg-white overflow-y-auto">
             <AccountSettings onClose={handleCloseSettings} />
           </div>
-        ) : null}
+        )}
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={getContextMenuItems(contextMenu.email)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }

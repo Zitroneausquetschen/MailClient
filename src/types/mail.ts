@@ -63,6 +63,21 @@ export interface AutoConfigResult {
   display_name?: string;
 }
 
+export interface EmailSignature {
+  id: string;
+  name: string;
+  content: string; // HTML content
+  isDefault: boolean;
+}
+
+export interface VacationSettings {
+  enabled: boolean;
+  subject: string;
+  message: string;
+  startDate?: string; // ISO date string
+  endDate?: string;   // ISO date string
+}
+
 export interface SavedAccount {
   id: string;
   display_name: string;
@@ -77,6 +92,10 @@ export interface SavedAccount {
   cache_days?: number;
   cache_body?: boolean;
   cache_attachments?: boolean;
+  // Signatures
+  signatures?: EmailSignature[];
+  // Vacation/Out-of-office
+  vacation?: VacationSettings;
 }
 
 export interface CacheStats {
@@ -123,4 +142,81 @@ export interface SieveCondition {
 export interface SieveAction {
   actionType: string;
   value?: string;
+}
+
+// CardDAV Contact types
+export interface ContactEmail {
+  email: string;
+  label: string; // "work", "home", "other"
+}
+
+export interface ContactPhone {
+  number: string;
+  label: string;
+}
+
+export interface Contact {
+  id: string;
+  displayName: string;
+  firstName: string;
+  lastName: string;
+  emails: ContactEmail[];
+  phones: ContactPhone[];
+  organization: string | null;
+  photoUrl: string | null;
+}
+
+// CalDAV Calendar types
+export interface Calendar {
+  id: string;
+  name: string;
+  color: string | null;
+  description: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  calendarId: string;
+  summary: string;
+  description: string | null;
+  location: string | null;
+  start: string;        // ISO 8601
+  end: string;          // ISO 8601
+  allDay: boolean;
+  recurrenceRule: string | null;
+  color: string | null;
+  organizer: EventAttendee | null;
+  attendees: EventAttendee[];
+}
+
+export interface EventAttendee {
+  email: string;
+  name: string | null;
+  role: "REQ-PARTICIPANT" | "OPT-PARTICIPANT" | "CHAIR";
+  status: "NEEDS-ACTION" | "ACCEPTED" | "DECLINED" | "TENTATIVE";
+  rsvp: boolean;
+}
+
+// Task types
+export interface Task {
+  id: string;
+  title: string;
+  description: string;
+  completed: boolean;
+  priority: "low" | "medium" | "high";
+  dueDate: string | null;  // ISO date string
+  createdAt: string;
+  updatedAt: string;
+  accountId: string;
+}
+
+// Note types
+export interface Note {
+  id: string;
+  title: string;
+  content: string;  // HTML content
+  createdAt: string;
+  updatedAt: string;
+  accountId: string;
+  color: string | null;  // Optional background color
 }

@@ -4,6 +4,7 @@ interface Props {
   emails: EmailHeader[];
   selectedUid?: number;
   onSelectEmail: (uid: number) => void;
+  onContextMenu?: (email: EmailHeader, x: number, y: number) => void;
   loading: boolean;
 }
 
@@ -56,7 +57,7 @@ function extractName(from: string): string {
   return from;
 }
 
-function EmailList({ emails, selectedUid, onSelectEmail, loading }: Props) {
+function EmailList({ emails, selectedUid, onSelectEmail, onContextMenu, loading }: Props) {
   if (loading && emails.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
@@ -73,12 +74,20 @@ function EmailList({ emails, selectedUid, onSelectEmail, loading }: Props) {
     );
   }
 
+  const handleContextMenu = (e: React.MouseEvent, email: EmailHeader) => {
+    e.preventDefault();
+    if (onContextMenu) {
+      onContextMenu(email, e.clientX, e.clientY);
+    }
+  };
+
   return (
     <div className="divide-y">
       {emails.map((email) => (
         <button
           key={email.uid}
           onClick={() => onSelectEmail(email.uid)}
+          onContextMenu={(e) => handleContextMenu(e, email)}
           className={`w-full p-3 text-left email-item ${
             selectedUid === email.uid ? "selected" : ""
           } ${!email.isRead ? "email-unread" : ""}`}

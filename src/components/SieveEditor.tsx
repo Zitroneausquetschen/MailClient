@@ -8,9 +8,11 @@ interface Props {
   password: string;
   folders: Folder[];
   onClose: () => void;
+  pendingRule?: SieveRule | null;
+  onPendingRuleHandled?: () => void;
 }
 
-function SieveEditor({ host, username, password, folders, onClose }: Props) {
+function SieveEditor({ host, username, password, folders, onClose, pendingRule, onPendingRuleHandled }: Props) {
   const [scripts, setScripts] = useState<SieveScript[]>([]);
   const [selectedScript, setSelectedScript] = useState<string | null>(null);
   const [rules, setRules] = useState<SieveRule[]>([]);
@@ -19,6 +21,7 @@ function SieveEditor({ host, username, password, folders, onClose }: Props) {
   const [editingRule, setEditingRule] = useState<SieveRule | null>(null);
   const [showRawEditor, setShowRawEditor] = useState(false);
   const [rawScript, setRawScript] = useState("");
+  const [pendingRuleProcessed, setPendingRuleProcessed] = useState(false);
 
   const sievePort = 4190;
   // ManageSieve typically runs on the mail server hostname (mail.domain.com)
@@ -27,6 +30,17 @@ function SieveEditor({ host, username, password, folders, onClose }: Props) {
   useEffect(() => {
     loadScripts();
   }, []);
+
+  // Handle pending rule from context menu
+  useEffect(() => {
+    if (pendingRule && !pendingRuleProcessed && !loading && selectedScript) {
+      setEditingRule(pendingRule);
+      setPendingRuleProcessed(true);
+      if (onPendingRuleHandled) {
+        onPendingRuleHandled();
+      }
+    }
+  }, [pendingRule, pendingRuleProcessed, loading, selectedScript]);
 
   const loadScripts = async () => {
     setLoading(true);

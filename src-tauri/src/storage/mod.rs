@@ -3,6 +3,39 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailSignature {
+    pub id: String,
+    pub name: String,
+    pub content: String,  // HTML content
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VacationSettings {
+    pub enabled: bool,
+    pub subject: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_date: Option<String>,
+}
+
+impl Default for VacationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            subject: "Abwesend".to_string(),
+            message: String::new(),
+            start_date: None,
+            end_date: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedAccount {
     pub id: String,
     pub display_name: String,
@@ -22,7 +55,13 @@ pub struct SavedAccount {
     #[serde(default = "default_true")]
     pub cache_body: bool,          // E-Mail-Inhalt cachen
     #[serde(default)]
-    pub cache_attachments: bool,   // Anhänge cachen
+    pub cache_attachments: bool,   // Anhaenge cachen
+    // Signatures
+    #[serde(default)]
+    pub signatures: Vec<EmailSignature>,
+    // Vacation settings
+    #[serde(default)]
+    pub vacation: Option<VacationSettings>,
 }
 
 fn default_cache_days() -> u32 { 30 }

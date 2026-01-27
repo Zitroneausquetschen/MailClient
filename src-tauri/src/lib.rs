@@ -1,5 +1,7 @@
 mod autoconfig;
 mod cache;
+mod caldav;
+mod carddav;
 mod imap;
 mod sieve;
 mod smtp;
@@ -7,6 +9,8 @@ mod storage;
 
 use autoconfig::AutoConfigResult;
 use cache::{EmailCache, CacheStats};
+use caldav::client::{CalDavClient, Calendar, CalendarEvent};
+use carddav::client::{CardDavClient, Contact};
 use imap::client::{Email, EmailHeader, Folder, ImapClient, MailAccount};
 use sieve::client::{SieveClient, SieveScript, SieveRule, rules_to_sieve_script, parse_sieve_script};
 use smtp::client::{OutgoingEmail, SmtpClient};
@@ -300,6 +304,109 @@ async fn sieve_save_rules(host: String, port: u16, username: String, password: S
     Ok(())
 }
 
+// CardDAV commands
+#[tauri::command]
+async fn fetch_contacts(host: String, username: String, password: String) -> Result<Vec<Contact>, String> {
+    let carddav_url = CardDavClient::discover_url(&host, &username);
+    let client = CardDavClient::new(&carddav_url, &username, &password);
+    client.fetch_contacts().await
+}
+
+#[tauri::command]
+async fn test_carddav_connection(host: String, username: String, password: String) -> Result<bool, String> {
+    let carddav_url = CardDavClient::discover_url(&host, &username);
+    let client = CardDavClient::new(&carddav_url, &username, &password);
+    client.test_connection().await
+}
+
+#[tauri::command]
+async fn create_contact(host: String, username: String, password: String, contact: Contact) -> Result<String, String> {
+    let carddav_url = CardDavClient::discover_url(&host, &username);
+    let client = CardDavClient::new(&carddav_url, &username, &password);
+    client.create_contact(&contact).await
+}
+
+#[tauri::command]
+async fn update_contact(host: String, username: String, password: String, contact: Contact) -> Result<(), String> {
+    let carddav_url = CardDavClient::discover_url(&host, &username);
+    let client = CardDavClient::new(&carddav_url, &username, &password);
+    client.update_contact(&contact).await
+}
+
+#[tauri::command]
+async fn delete_contact(host: String, username: String, password: String, contact_id: String) -> Result<(), String> {
+    let carddav_url = CardDavClient::discover_url(&host, &username);
+    let client = CardDavClient::new(&carddav_url, &username, &password);
+    client.delete_contact(&contact_id).await
+}
+
+// CalDAV commands
+#[tauri::command]
+async fn fetch_calendars(host: String, username: String, password: String) -> Result<Vec<Calendar>, String> {
+    log_to_file(&format!("[CalDAV] fetch_calendars called with host: {}, username: {}", host, username));
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    log_to_file(&format!("[CalDAV] Constructed URL: {}", caldav_url));
+    println!("[CalDAV] Fetching calendars from URL: {}", caldav_url);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    let result = client.fetch_calendars().await;
+    log_to_file(&format!("[CalDAV] Result: {:?}", result));
+    println!("[CalDAV] Result: {:?}", result);
+    result
+}
+
+#[tauri::command]
+async fn fetch_calendar_events(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    start: String,
+    end: String
+) -> Result<Vec<CalendarEvent>, String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.fetch_events(&calendar_id, &start, &end).await
+}
+
+#[tauri::command]
+async fn create_calendar_event(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    event: CalendarEvent
+) -> Result<String, String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.create_event(&calendar_id, &event).await
+}
+
+#[tauri::command]
+async fn update_calendar_event(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    event: CalendarEvent
+) -> Result<(), String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.update_event(&calendar_id, &event).await
+}
+
+#[tauri::command]
+async fn delete_calendar_event(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    event_id: String
+) -> Result<(), String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.delete_event(&calendar_id, &event_id).await
+}
+
 // Cache commands
 #[tauri::command]
 fn get_cached_headers(account_id: String, folder: String, start: u32, count: u32) -> Result<Vec<EmailHeader>, String> {
@@ -408,6 +515,12 @@ pub fn run() {
             sieve_delete_script,
             sieve_get_rules,
             sieve_save_rules,
+            // CardDAV commands
+            fetch_contacts,
+            test_carddav_connection,
+            create_contact,
+            update_contact,
+            delete_contact,
             // Cache commands
             get_cached_headers,
             get_cached_email,
@@ -422,6 +535,12 @@ pub fn run() {
             get_cache_sync_state,
             set_cache_sync_state,
             has_cached_email_body,
+            // CalDAV commands
+            fetch_calendars,
+            fetch_calendar_events,
+            create_calendar_event,
+            update_calendar_event,
+            delete_calendar_event,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

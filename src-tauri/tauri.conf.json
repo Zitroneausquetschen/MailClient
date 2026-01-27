@@ -5,7 +5,7 @@
   "identifier": "com.mailclient.app",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5234",
+    "devUrl": "http://localhost:5235",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

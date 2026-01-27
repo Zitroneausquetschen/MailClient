@@ -44,3 +44,11 @@ quick-xml = { version = "0.37", features = ["serialize"] }
 dirs = "5"
 # SQLite for email caching
 rusqlite = { version = "0.32", features = ["bundled"] }
+# CardDAV support
+regex = "1"
+html-escape = "0.2"
+md5 = "0.7"
+# CalDAV support
+icalendar = "0.16"
+uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
