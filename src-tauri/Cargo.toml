@@ -1,6 +1,6 @@
 [package]
 name = "mailclient"
-version = "0.1.0"
+version = "0.3.0"
 description = "E-Mail Client für MailCow"
 authors = [""]
 edition = "2021"
@@ -54,3 +54,5 @@ md5 = "0.7"
 icalendar = "0.16"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
+# JMAP support
+jmap-client = "0.3"

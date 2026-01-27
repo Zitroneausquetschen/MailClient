@@ -3,6 +3,7 @@ mod cache;
 mod caldav;
 mod carddav;
 mod imap;
+mod jmap;
 mod sieve;
 mod smtp;
 mod storage;
@@ -12,6 +13,7 @@ use cache::{EmailCache, CacheStats};
 use caldav::client::{CalDavClient, Calendar, CalendarEvent, CalDavTask};
 use carddav::client::{CardDavClient, Contact};
 use imap::client::{Email, EmailHeader, Folder, ImapClient, MailAccount};
+use jmap::client::{JmapClient, JmapAccount, JmapMailbox, JmapEmailHeader, JmapEmail, JmapOutgoingEmail};
 use sieve::client::{SieveClient, SieveScript, SieveRule, rules_to_sieve_script, parse_sieve_script};
 use smtp::client::{OutgoingEmail, SmtpClient};
 use storage::SavedAccount;
@@ -50,12 +52,15 @@ pub struct ConnectedAccount {
 pub struct AppState {
     // Multiple IMAP clients indexed by account ID
     imap_clients: Arc<Mutex<HashMap<String, ImapClient>>>,
+    // Multiple JMAP clients indexed by account ID
+    jmap_clients: Arc<Mutex<HashMap<String, JmapClient>>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         Self {
             imap_clients: Arc::new(Mutex::new(HashMap::new())),
+            jmap_clients: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -733,6 +738,288 @@ fn has_cached_email_body(account_id: String, folder: String, uid: u32) -> Result
     cache.has_email_body(&folder, uid)
 }
 
+// JMAP commands
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapConnectedAccount {
+    pub id: String,
+    pub display_name: String,
+    pub email: String,
+    pub protocol: String,
+}
+
+#[tauri::command]
+async fn jmap_connect(state: State<'_, AppState>, account: JmapAccount) -> Result<JmapConnectedAccount, String> {
+    let account_id = account.username.clone();
+    let display_name = account.display_name.clone();
+    let email = account.username.clone();
+
+    let mut client = JmapClient::new();
+    client.connect(account).await?;
+
+    let mut clients = state.jmap_clients.lock().await;
+    clients.insert(account_id.clone(), client);
+
+    Ok(JmapConnectedAccount {
+        id: account_id,
+        display_name,
+        email,
+        protocol: "jmap".to_string(),
+    })
+}
+
+#[tauri::command]
+async fn jmap_disconnect(state: State<'_, AppState>, account_id: String) -> Result<(), String> {
+    let mut clients = state.jmap_clients.lock().await;
+    if let Some(mut client) = clients.remove(&account_id) {
+        client.disconnect().await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn jmap_list_mailboxes(state: State<'_, AppState>, account_id: String) -> Result<Vec<JmapMailbox>, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.list_mailboxes().await
+}
+
+#[tauri::command]
+async fn jmap_fetch_email_list(
+    state: State<'_, AppState>,
+    account_id: String,
+    mailbox_id: String,
+    position: u32,
+    limit: u32,
+) -> Result<Vec<JmapEmailHeader>, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.fetch_email_list(&mailbox_id, position, limit).await
+}
+
+#[tauri::command]
+async fn jmap_fetch_email(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+) -> Result<JmapEmail, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.fetch_email(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_mark_read(state: State<'_, AppState>, account_id: String, email_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.mark_read(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_mark_unread(state: State<'_, AppState>, account_id: String, email_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.mark_unread(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_mark_flagged(state: State<'_, AppState>, account_id: String, email_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.mark_flagged(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_unmark_flagged(state: State<'_, AppState>, account_id: String, email_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.unmark_flagged(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_delete_email(state: State<'_, AppState>, account_id: String, email_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.delete_email(&email_id).await
+}
+
+#[tauri::command]
+async fn jmap_move_email(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_id: String,
+    target_mailbox_id: String,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.move_email(&email_id, &target_mailbox_id).await
+}
+
+#[tauri::command]
+async fn jmap_create_mailbox(
+    state: State<'_, AppState>,
+    account_id: String,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<String, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.create_mailbox(&name, parent_id.as_deref()).await
+}
+
+#[tauri::command]
+async fn jmap_delete_mailbox(state: State<'_, AppState>, account_id: String, mailbox_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.delete_mailbox(&mailbox_id).await
+}
+
+#[tauri::command]
+async fn jmap_rename_mailbox(
+    state: State<'_, AppState>,
+    account_id: String,
+    mailbox_id: String,
+    new_name: String,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.rename_mailbox(&mailbox_id, &new_name).await
+}
+
+#[tauri::command]
+async fn jmap_download_attachment(
+    state: State<'_, AppState>,
+    account_id: String,
+    blob_id: String,
+    filename: String,
+) -> Result<String, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+
+    // Download the blob
+    let data = client.download_blob(&blob_id).await?;
+
+    // Get the downloads directory
+    let downloads_dir = dirs::download_dir()
+        .ok_or("Could not find downloads directory")?;
+
+    // Sanitize filename
+    let safe_filename = filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_' || *c == ' ')
+        .collect::<String>();
+
+    let file_path = downloads_dir.join(&safe_filename);
+
+    // Handle duplicate filenames
+    let final_path = if file_path.exists() {
+        let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+        let ext = file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let mut counter = 1;
+        loop {
+            let new_name = if ext.is_empty() {
+                format!("{} ({})", stem, counter)
+            } else {
+                format!("{} ({}).{}", stem, counter, ext)
+            };
+            let new_path = downloads_dir.join(&new_name);
+            if !new_path.exists() {
+                break new_path;
+            }
+            counter += 1;
+        }
+    } else {
+        file_path
+    };
+
+    // Write the file
+    std::fs::write(&final_path, &data)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn jmap_send_email(state: State<'_, AppState>, account_id: String, email: JmapOutgoingEmail) -> Result<String, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.send_email(email).await
+}
+
+#[tauri::command]
+async fn jmap_search_emails(
+    state: State<'_, AppState>,
+    account_id: String,
+    query: String,
+    mailbox_id: Option<String>,
+) -> Result<Vec<JmapEmailHeader>, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.search_emails(&query, mailbox_id.as_deref()).await
+}
+
+// JMAP bulk operations
+#[tauri::command]
+async fn jmap_bulk_mark_read(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_ids: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let ids: Vec<&str> = email_ids.iter().map(|s| s.as_str()).collect();
+    client.bulk_mark_read(&ids).await
+}
+
+#[tauri::command]
+async fn jmap_bulk_mark_unread(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_ids: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let ids: Vec<&str> = email_ids.iter().map(|s| s.as_str()).collect();
+    client.bulk_mark_unread(&ids).await
+}
+
+#[tauri::command]
+async fn jmap_bulk_mark_flagged(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_ids: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let ids: Vec<&str> = email_ids.iter().map(|s| s.as_str()).collect();
+    client.bulk_mark_flagged(&ids).await
+}
+
+#[tauri::command]
+async fn jmap_bulk_delete(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_ids: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let ids: Vec<&str> = email_ids.iter().map(|s| s.as_str()).collect();
+    client.bulk_delete(&ids).await
+}
+
+#[tauri::command]
+async fn jmap_bulk_move(
+    state: State<'_, AppState>,
+    account_id: String,
+    email_ids: Vec<String>,
+    target_mailbox_id: String,
+) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let ids: Vec<&str> = email_ids.iter().map(|s| s.as_str()).collect();
+    client.bulk_move(&ids, &target_mailbox_id).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -812,6 +1099,29 @@ pub fn run() {
             create_caldav_task,
             update_caldav_task,
             delete_caldav_task,
+            // JMAP commands
+            jmap_connect,
+            jmap_disconnect,
+            jmap_list_mailboxes,
+            jmap_fetch_email_list,
+            jmap_fetch_email,
+            jmap_mark_read,
+            jmap_mark_unread,
+            jmap_mark_flagged,
+            jmap_unmark_flagged,
+            jmap_delete_email,
+            jmap_move_email,
+            jmap_create_mailbox,
+            jmap_delete_mailbox,
+            jmap_rename_mailbox,
+            jmap_download_attachment,
+            jmap_send_email,
+            jmap_search_emails,
+            jmap_bulk_mark_read,
+            jmap_bulk_mark_unread,
+            jmap_bulk_mark_flagged,
+            jmap_bulk_delete,
+            jmap_bulk_move,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -253,3 +253,99 @@ export interface Note {
   accountId: string;
   color: string | null;  // Optional background color
 }
+
+// JMAP types
+export interface JmapAccount {
+  jmapUrl: string;
+  username: string;
+  password: string;
+  displayName: string;
+}
+
+export interface JmapMailbox {
+  id: string;
+  name: string;
+  parentId: string | null;
+  role: string | null;  // Inbox, Drafts, Sent, Trash, Junk, Archive, Important
+  totalEmails: number;
+  unreadEmails: number;
+  sortOrder: number;
+}
+
+export interface JmapEmailHeader {
+  id: string;
+  blobId: string;
+  threadId: string;
+  mailboxIds: string[];
+  subject: string;
+  from: string;
+  to: string;
+  date: string;
+  isRead: boolean;
+  isFlagged: boolean;
+  isAnswered: boolean;
+  isDraft: boolean;
+  hasAttachments: boolean;
+  size: number;
+  preview: string;
+}
+
+export interface JmapEmail {
+  id: string;
+  blobId: string;
+  threadId: string;
+  mailboxIds: string[];
+  subject: string;
+  from: string;
+  to: string;
+  cc: string;
+  bcc: string;
+  date: string;
+  bodyText: string;
+  bodyHtml: string;
+  attachments: JmapAttachment[];
+  isRead: boolean;
+  isFlagged: boolean;
+  isAnswered: boolean;
+  isDraft: boolean;
+  size: number;
+}
+
+export interface JmapAttachment {
+  blobId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface JmapOutgoingEmail {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  bodyText: string;
+  bodyHtml?: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+export interface JmapConnectedAccount {
+  id: string;
+  displayName: string;
+  email: string;
+  protocol: "jmap";
+}
+
+// SavedAccount extended for JMAP
+export interface SavedJmapAccount {
+  id: string;
+  displayName: string;
+  username: string;
+  jmapUrl: string;
+  password?: string;
+  protocol: "jmap";
+  // Signatures
+  signatures?: EmailSignature[];
+  // Vacation/Out-of-office
+  vacation?: VacationSettings;
+}
