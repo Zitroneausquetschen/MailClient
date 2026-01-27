@@ -13,6 +13,7 @@ import TasksView from "./components/TasksView";
 import NotesView from "./components/NotesView";
 import AccountSettings from "./components/AccountSettings";
 import MainNavigation from "./components/MainNavigation";
+import UpdateChecker from "./components/UpdateChecker";
 import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
 import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
@@ -1344,6 +1345,9 @@ function App() {
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {/* Update Checker - checks automatically on app start */}
+      <UpdateChecker checkOnMount={true} />
     </div>
   );
 }
