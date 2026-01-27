@@ -29,6 +29,7 @@ function App() {
   // Main tab state
   const [mainTab, setMainTab] = useState<MainTab>("email");
   const [showSettings, setShowSettings] = useState(false);
+  const [showAddAccount, setShowAddAccount] = useState(false);
 
   // Account state
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
@@ -817,8 +818,8 @@ function App() {
   };
 
   const handleAddAccount = () => {
-    // Switch to settings to add account
-    setShowSettings(true);
+    // Show the add account form
+    setShowAddAccount(true);
   };
 
   const extractEmailAddress = (from: string): string => {
@@ -1353,6 +1354,30 @@ function App() {
 
       {/* Update Checker - checks automatically on app start */}
       <UpdateChecker checkOnMount={true} />
+
+      {/* Add Account Modal */}
+      {showAddAccount && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 relative">
+            <button
+              onClick={() => setShowAddAccount(false)}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 z-10"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <ConnectionForm
+              onConnect={async (account) => {
+                await handleConnect(account);
+                setShowAddAccount(false);
+              }}
+              loading={loading}
+              error={error}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
