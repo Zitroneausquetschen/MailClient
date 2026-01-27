@@ -197,7 +197,7 @@ export interface EventAttendee {
   rsvp: boolean;
 }
 
-// Task types
+// Task types (local storage)
 export interface Task {
   id: string;
   title: string;
@@ -208,6 +208,21 @@ export interface Task {
   createdAt: string;
   updatedAt: string;
   accountId: string;
+}
+
+// CalDAV Task (VTODO)
+export interface CalDavTask {
+  id: string;
+  calendarId: string;
+  summary: string;
+  description: string | null;
+  completed: boolean;
+  percentComplete: number | null;
+  priority: number | null;  // 1-9, 1=high, 9=low
+  due: string | null;       // ISO date string
+  created: string | null;
+  lastModified: string | null;
+  status: string | null;    // NEEDS-ACTION, IN-PROCESS, COMPLETED, CANCELLED
 }
 
 // Note types

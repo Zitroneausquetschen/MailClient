@@ -1,45 +1,94 @@
-import { useState, useEffect } from "react";
-import { Task, SavedAccount } from "../types/mail";
+import { useState, useEffect, useCallback } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { CalDavTask, Calendar, SavedAccount } from "../types/mail";
 
 interface Props {
   currentAccount: SavedAccount | null;
   onClose?: () => void;
 }
 
-const STORAGE_KEY = "mailclient_tasks";
+// Convert CalDAV priority (1-9) to our priority levels
+function caldavPriorityToLevel(priority: number | null): "low" | "medium" | "high" {
+  if (priority === null || priority === 0) return "medium";
+  if (priority <= 4) return "high";
+  if (priority <= 6) return "medium";
+  return "low";
+}
+
+// Convert our priority levels to CalDAV priority (1-9)
+function levelToCaldavPriority(level: "low" | "medium" | "high"): number {
+  switch (level) {
+    case "high": return 1;
+    case "medium": return 5;
+    case "low": return 9;
+  }
+}
 
 function TasksView({ currentAccount, onClose }: Props) {
-  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasks, setTasks] = useState<CalDavTask[]>([]);
+  const [calendars, setCalendars] = useState<Calendar[]>([]);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string>("personal");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<CalDavTask | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "completed">("all");
 
-  // Load tasks from localStorage
+  // Load calendars
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
+    if (!currentAccount) return;
+
+    const loadCalendars = async () => {
       try {
-        const allTasks: Task[] = JSON.parse(stored);
-        setTasks(allTasks);
+        const result = await invoke<Calendar[]>("fetch_calendars", {
+          host: currentAccount.imap_host,
+          username: currentAccount.username,
+          password: currentAccount.password || "",
+        });
+        setCalendars(result);
+        // Use "personal" as default if available, otherwise first calendar
+        if (result.length > 0) {
+          const personal = result.find(c => c.id === "personal");
+          setSelectedCalendarId(personal?.id || result[0].id);
+        }
       } catch (e) {
-        console.error("Failed to load tasks:", e);
+        console.error("Failed to load calendars:", e);
+        setError("Kalender konnten nicht geladen werden");
       }
+    };
+
+    loadCalendars();
+  }, [currentAccount?.id]);
+
+  // Load tasks from CalDAV
+  const loadTasks = useCallback(async () => {
+    if (!currentAccount || !selectedCalendarId) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await invoke<CalDavTask[]>("fetch_caldav_tasks", {
+        host: currentAccount.imap_host,
+        username: currentAccount.username,
+        password: currentAccount.password || "",
+        calendarId: selectedCalendarId,
+      });
+      setTasks(result);
+    } catch (e) {
+      console.error("Failed to load tasks:", e);
+      setError("Aufgaben konnten nicht geladen werden: " + String(e));
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [currentAccount, selectedCalendarId]);
 
-  // Save tasks to localStorage
-  const saveTasks = (newTasks: Task[]) => {
-    setTasks(newTasks);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newTasks));
-  };
+  useEffect(() => {
+    loadTasks();
+  }, [loadTasks]);
 
-  // Filter tasks by account
-  const accountTasks = tasks.filter(
-    (t) => !currentAccount || t.accountId === currentAccount.id
-  );
-
-  // Apply filter
-  const filteredTasks = accountTasks.filter((t) => {
+  // Filter tasks
+  const filteredTasks = tasks.filter((t) => {
     if (filter === "active") return !t.completed;
     if (filter === "completed") return t.completed;
     return true;
@@ -48,45 +97,100 @@ function TasksView({ currentAccount, onClose }: Props) {
   // Sort: incomplete first, then by due date, then by priority
   const sortedTasks = [...filteredTasks].sort((a, b) => {
     if (a.completed !== b.completed) return a.completed ? 1 : -1;
-    if (a.dueDate && b.dueDate) return a.dueDate.localeCompare(b.dueDate);
-    if (a.dueDate) return -1;
-    if (b.dueDate) return 1;
-    const priorityOrder = { high: 0, medium: 1, low: 2 };
-    return priorityOrder[a.priority] - priorityOrder[b.priority];
+    if (a.due && b.due) return a.due.localeCompare(b.due);
+    if (a.due) return -1;
+    if (b.due) return 1;
+    // Lower priority number = higher priority
+    const aPrio = a.priority ?? 5;
+    const bPrio = b.priority ?? 5;
+    return aPrio - bPrio;
   });
 
-  const handleToggleComplete = (taskId: string) => {
-    const newTasks = tasks.map((t) =>
-      t.id === taskId
-        ? { ...t, completed: !t.completed, updatedAt: new Date().toISOString() }
-        : t
-    );
-    saveTasks(newTasks);
-  };
+  const handleToggleComplete = async (task: CalDavTask) => {
+    if (!currentAccount) return;
 
-  const handleDelete = (taskId: string) => {
-    const newTasks = tasks.filter((t) => t.id !== taskId);
-    saveTasks(newTasks);
-  };
+    const updatedTask: CalDavTask = {
+      ...task,
+      completed: !task.completed,
+      percentComplete: !task.completed ? 100 : 0,
+      status: !task.completed ? "COMPLETED" : "NEEDS-ACTION",
+    };
 
-  const handleSaveTask = (task: Task) => {
-    const existingIndex = tasks.findIndex((t) => t.id === task.id);
-    let newTasks: Task[];
-
-    if (existingIndex >= 0) {
-      newTasks = [...tasks];
-      newTasks[existingIndex] = { ...task, updatedAt: new Date().toISOString() };
-    } else {
-      newTasks = [...tasks, task];
+    try {
+      await invoke("update_caldav_task", {
+        host: currentAccount.imap_host,
+        username: currentAccount.username,
+        password: currentAccount.password || "",
+        calendarId: selectedCalendarId,
+        task: updatedTask,
+      });
+      // Update local state
+      setTasks(tasks.map(t => t.id === task.id ? updatedTask : t));
+    } catch (e) {
+      console.error("Failed to toggle task:", e);
+      setError("Aufgabe konnte nicht aktualisiert werden");
     }
-
-    saveTasks(newTasks);
-    setShowAddDialog(false);
-    setEditingTask(null);
   };
 
-  const completedCount = accountTasks.filter((t) => t.completed).length;
-  const totalCount = accountTasks.length;
+  const handleDelete = async (taskId: string) => {
+    if (!currentAccount) return;
+
+    try {
+      await invoke("delete_caldav_task", {
+        host: currentAccount.imap_host,
+        username: currentAccount.username,
+        password: currentAccount.password || "",
+        calendarId: selectedCalendarId,
+        taskId,
+      });
+      setTasks(tasks.filter(t => t.id !== taskId));
+    } catch (e) {
+      console.error("Failed to delete task:", e);
+      setError("Aufgabe konnte nicht geloescht werden");
+    }
+  };
+
+  const handleSaveTask = async (task: CalDavTask, isNew: boolean) => {
+    if (!currentAccount) return;
+
+    try {
+      if (isNew) {
+        await invoke("create_caldav_task", {
+          host: currentAccount.imap_host,
+          username: currentAccount.username,
+          password: currentAccount.password || "",
+          calendarId: selectedCalendarId,
+          task,
+        });
+      } else {
+        await invoke("update_caldav_task", {
+          host: currentAccount.imap_host,
+          username: currentAccount.username,
+          password: currentAccount.password || "",
+          calendarId: selectedCalendarId,
+          task,
+        });
+      }
+      // Reload tasks to get fresh data from server
+      loadTasks();
+      setShowAddDialog(false);
+      setEditingTask(null);
+    } catch (e) {
+      console.error("Failed to save task:", e);
+      setError("Aufgabe konnte nicht gespeichert werden: " + String(e));
+    }
+  };
+
+  const completedCount = tasks.filter((t) => t.completed).length;
+  const totalCount = tasks.length;
+
+  if (!currentAccount) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-400">
+        <p>Bitte waehle ein Konto aus</p>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col bg-gray-50">
@@ -99,6 +203,30 @@ function TasksView({ currentAccount, onClose }: Props) {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {/* Calendar selector */}
+          {calendars.length > 1 && (
+            <select
+              value={selectedCalendarId}
+              onChange={(e) => setSelectedCalendarId(e.target.value)}
+              className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {calendars.map((cal) => (
+                <option key={cal.id} value={cal.id}>
+                  {cal.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <button
+            onClick={loadTasks}
+            disabled={loading}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+            title="Aktualisieren"
+          >
+            <svg className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
           <button
             onClick={() => {
               setEditingTask(null);
@@ -121,6 +249,14 @@ function TasksView({ currentAccount, onClose }: Props) {
         </div>
       </div>
 
+      {/* Error message */}
+      {error && (
+        <div className="bg-red-50 border-b border-red-200 px-6 py-3 text-red-700 text-sm">
+          {error}
+          <button onClick={() => setError(null)} className="ml-2 underline">Schliessen</button>
+        </div>
+      )}
+
       {/* Filter tabs */}
       <div className="bg-white border-b px-6">
         <div className="flex gap-4">
@@ -137,9 +273,9 @@ function TasksView({ currentAccount, onClose }: Props) {
               {f === "all" ? "Alle" : f === "active" ? "Offen" : "Erledigt"}
               <span className="ml-2 text-xs bg-gray-100 px-2 py-0.5 rounded-full">
                 {f === "all"
-                  ? accountTasks.length
+                  ? tasks.length
                   : f === "active"
-                  ? accountTasks.filter((t) => !t.completed).length
+                  ? tasks.filter((t) => !t.completed).length
                   : completedCount}
               </span>
             </button>
@@ -149,7 +285,14 @@ function TasksView({ currentAccount, onClose }: Props) {
 
       {/* Task list */}
       <div className="flex-1 overflow-y-auto p-6">
-        {sortedTasks.length === 0 ? (
+        {loading && tasks.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">
+            <svg className="w-8 h-8 mx-auto mb-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <p>Lade Aufgaben...</p>
+          </div>
+        ) : sortedTasks.length === 0 ? (
           <div className="text-center py-12 text-gray-400">
             <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
@@ -163,7 +306,7 @@ function TasksView({ currentAccount, onClose }: Props) {
               <TaskItem
                 key={task.id}
                 task={task}
-                onToggle={() => handleToggleComplete(task.id)}
+                onToggle={() => handleToggleComplete(task)}
                 onEdit={() => {
                   setEditingTask(task);
                   setShowAddDialog(true);
@@ -179,7 +322,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       {showAddDialog && (
         <TaskDialog
           task={editingTask}
-          accountId={currentAccount?.id || "default"}
+          calendarId={selectedCalendarId}
           onSave={handleSaveTask}
           onCancel={() => {
             setShowAddDialog(false);
@@ -192,13 +335,15 @@ function TasksView({ currentAccount, onClose }: Props) {
 }
 
 interface TaskItemProps {
-  task: Task;
+  task: CalDavTask;
   onToggle: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }
 
 function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
+  const priorityLevel = caldavPriorityToLevel(task.priority);
+
   const priorityColors = {
     high: "text-red-600 bg-red-50",
     medium: "text-yellow-600 bg-yellow-50",
@@ -211,7 +356,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
     low: "Niedrig",
   };
 
-  const isOverdue = task.dueDate && !task.completed && new Date(task.dueDate) < new Date();
+  const isOverdue = task.due && !task.completed && new Date(task.due) < new Date();
 
   return (
     <div
@@ -243,12 +388,12 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
               task.completed ? "line-through text-gray-400" : "text-gray-800"
             }`}
           >
-            {task.title}
+            {task.summary}
           </h3>
           <span
-            className={`text-xs px-2 py-0.5 rounded ${priorityColors[task.priority]}`}
+            className={`text-xs px-2 py-0.5 rounded ${priorityColors[priorityLevel]}`}
           >
-            {priorityLabels[task.priority]}
+            {priorityLabels[priorityLevel]}
           </span>
         </div>
 
@@ -257,12 +402,12 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
         )}
 
         <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
-          {task.dueDate && (
+          {task.due && (
             <span className={isOverdue ? "text-red-500 font-medium" : ""}>
               <svg className="w-3 h-3 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              {new Date(task.dueDate).toLocaleDateString("de-DE")}
+              {new Date(task.due).toLocaleDateString("de-DE")}
               {isOverdue && " (ueberfaellig)"}
             </span>
           )}
@@ -295,36 +440,42 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
 }
 
 interface TaskDialogProps {
-  task: Task | null;
-  accountId: string;
-  onSave: (task: Task) => void;
+  task: CalDavTask | null;
+  calendarId: string;
+  onSave: (task: CalDavTask, isNew: boolean) => void;
   onCancel: () => void;
 }
 
-function TaskDialog({ task, accountId, onSave, onCancel }: TaskDialogProps) {
-  const [title, setTitle] = useState(task?.title || "");
+function TaskDialog({ task, calendarId, onSave, onCancel }: TaskDialogProps) {
+  const [summary, setSummary] = useState(task?.summary || "");
   const [description, setDescription] = useState(task?.description || "");
-  const [priority, setPriority] = useState<"low" | "medium" | "high">(task?.priority || "medium");
-  const [dueDate, setDueDate] = useState(task?.dueDate || "");
+  const [priority, setPriority] = useState<"low" | "medium" | "high">(
+    task ? caldavPriorityToLevel(task.priority) : "medium"
+  );
+  const [dueDate, setDueDate] = useState(task?.due?.split("T")[0] || "");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!summary.trim()) return;
 
+    const isNew = !task;
     const now = new Date().toISOString();
-    const newTask: Task = {
+
+    const newTask: CalDavTask = {
       id: task?.id || `task-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      title: title.trim(),
-      description: description.trim(),
+      calendarId: task?.calendarId || calendarId,
+      summary: summary.trim(),
+      description: description.trim() || null,
       completed: task?.completed || false,
-      priority,
-      dueDate: dueDate || null,
-      createdAt: task?.createdAt || now,
-      updatedAt: now,
-      accountId: task?.accountId || accountId,
+      percentComplete: task?.percentComplete ?? 0,
+      priority: levelToCaldavPriority(priority),
+      due: dueDate || null,
+      created: task?.created || now,
+      lastModified: now,
+      status: task?.status || "NEEDS-ACTION",
     };
 
-    onSave(newTask);
+    onSave(newTask, isNew);
   };
 
   return (
@@ -344,8 +495,8 @@ function TaskDialog({ task, accountId, onSave, onCancel }: TaskDialogProps) {
               </label>
               <input
                 type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Was muss erledigt werden?"
                 autoFocus
@@ -405,7 +556,7 @@ function TaskDialog({ task, accountId, onSave, onCancel }: TaskDialogProps) {
             </button>
             <button
               type="submit"
-              disabled={!title.trim()}
+              disabled={!summary.trim()}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
               {task ? "Speichern" : "Erstellen"}

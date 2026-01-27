@@ -9,7 +9,7 @@ mod storage;
 
 use autoconfig::AutoConfigResult;
 use cache::{EmailCache, CacheStats};
-use caldav::client::{CalDavClient, Calendar, CalendarEvent};
+use caldav::client::{CalDavClient, Calendar, CalendarEvent, CalDavTask};
 use carddav::client::{CardDavClient, Contact};
 use imap::client::{Email, EmailHeader, Folder, ImapClient, MailAccount};
 use sieve::client::{SieveClient, SieveScript, SieveRule, rules_to_sieve_script, parse_sieve_script};
@@ -407,6 +407,58 @@ async fn delete_calendar_event(
     client.delete_event(&calendar_id, &event_id).await
 }
 
+// CalDAV Task commands
+#[tauri::command]
+async fn fetch_caldav_tasks(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String
+) -> Result<Vec<CalDavTask>, String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.fetch_tasks(&calendar_id).await
+}
+
+#[tauri::command]
+async fn create_caldav_task(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    task: CalDavTask
+) -> Result<String, String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.create_task(&calendar_id, &task).await
+}
+
+#[tauri::command]
+async fn update_caldav_task(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    task: CalDavTask
+) -> Result<(), String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.update_task(&calendar_id, &task).await
+}
+
+#[tauri::command]
+async fn delete_caldav_task(
+    host: String,
+    username: String,
+    password: String,
+    calendar_id: String,
+    task_id: String
+) -> Result<(), String> {
+    let caldav_url = CalDavClient::discover_url(&host, &username);
+    let client = CalDavClient::new(&caldav_url, &username, &password);
+    client.delete_task(&calendar_id, &task_id).await
+}
+
 // Cache commands
 #[tauri::command]
 fn get_cached_headers(account_id: String, folder: String, start: u32, count: u32) -> Result<Vec<EmailHeader>, String> {
@@ -541,6 +593,10 @@ pub fn run() {
             create_calendar_event,
             update_calendar_event,
             delete_calendar_event,
+            fetch_caldav_tasks,
+            create_caldav_task,
+            update_caldav_task,
+            delete_caldav_task,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
