@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Email, Folder, Attachment } from "../types/mail";
 
 interface Props {
@@ -10,25 +11,26 @@ interface Props {
   onDownloadAttachment?: (attachment: Attachment) => Promise<void>;
 }
 
-function formatDate(dateStr: string): string {
-  try {
-    const date = new Date(dateStr);
-    return date.toLocaleString("de-DE", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return dateStr;
-  }
-}
-
 function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttachment }: Props) {
+  const { t, i18n } = useTranslation();
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [downloadingAttachment, setDownloadingAttachment] = useState<string | null>(null);
+
+  const formatDate = (dateStr: string): string => {
+    try {
+      const date = new Date(dateStr);
+      return date.toLocaleString(i18n.language, {
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return dateStr;
+    }
+  };
 
   const handleDownload = async (attachment: Attachment) => {
     if (!onDownloadAttachment) return;
@@ -46,21 +48,21 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
       <div className="p-4 border-b">
         <div className="flex items-start justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-800 flex-1">
-            {email.subject || "(Kein Betreff)"}
+            {email.subject || t("email.noSubject")}
           </h2>
           <div className="flex items-center gap-2 ml-4">
             <button
               onClick={() => onReply(email)}
               className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
             >
-              Antworten
+              {t("email.reply")}
             </button>
             <div className="relative">
               <button
                 onClick={() => setShowMoveMenu(!showMoveMenu)}
                 className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50"
               >
-                Verschieben
+                {t("email.move")}
               </button>
               {showMoveMenu && (
                 <div className="absolute right-0 mt-1 w-48 bg-white border rounded-lg shadow-lg z-10">
@@ -83,28 +85,28 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
               onClick={onDelete}
               className="px-3 py-1.5 text-sm border border-red-300 text-red-600 rounded hover:bg-red-50"
             >
-              Löschen
+              {t("common.delete")}
             </button>
           </div>
         </div>
 
         <div className="space-y-1 text-sm">
           <div className="flex">
-            <span className="w-16 text-gray-500">Von:</span>
+            <span className="w-16 text-gray-500">{t("email.from")}:</span>
             <span className="text-gray-800">{email.from}</span>
           </div>
           <div className="flex">
-            <span className="w-16 text-gray-500">An:</span>
+            <span className="w-16 text-gray-500">{t("email.to")}:</span>
             <span className="text-gray-800">{email.to}</span>
           </div>
           {email.cc && (
             <div className="flex">
-              <span className="w-16 text-gray-500">CC:</span>
+              <span className="w-16 text-gray-500">{t("email.cc")}:</span>
               <span className="text-gray-800">{email.cc}</span>
             </div>
           )}
           <div className="flex">
-            <span className="w-16 text-gray-500">Datum:</span>
+            <span className="w-16 text-gray-500">{t("email.date")}:</span>
             <span className="text-gray-800">{formatDate(email.date)}</span>
           </div>
         </div>
@@ -113,7 +115,7 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
         {email.attachments.length > 0 && (
           <div className="mt-4 pt-4 border-t">
             <h4 className="text-sm font-medium text-gray-700 mb-2">
-              Anhänge ({email.attachments.length})
+              {t("email.attachments")} ({email.attachments.length})
             </h4>
             <div className="flex flex-wrap gap-2">
               {email.attachments.map((attachment, i) => (
@@ -122,7 +124,7 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
                   onClick={() => handleDownload(attachment)}
                   disabled={downloadingAttachment === attachment.partId}
                   className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded text-sm hover:bg-gray-200 transition-colors cursor-pointer disabled:opacity-50"
-                  title="Klicken zum Herunterladen"
+                  title={t("email.downloadAttachment")}
                 >
                   {downloadingAttachment === attachment.partId ? (
                     <span className="animate-spin">⏳</span>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { VacationSettings as VacationSettingsType, SavedAccount } from "../types/mail";
 
 interface Props {
@@ -9,8 +10,9 @@ interface Props {
 }
 
 function VacationSettings({ vacation, onChange, account }: Props) {
+  const { t } = useTranslation();
   const [enabled, setEnabled] = useState(vacation?.enabled || false);
-  const [subject, setSubject] = useState(vacation?.subject || "Abwesend");
+  const [subject, setSubject] = useState(vacation?.subject || t("vacation.defaultSubject", "Abwesend"));
   const [message, setMessage] = useState(
     vacation?.message ||
     `Vielen Dank fuer Ihre Nachricht.\n\nIch bin derzeit nicht im Buero und kann Ihre E-Mail nicht sofort beantworten.\n\nIch werde mich nach meiner Rueckkehr bei Ihnen melden.\n\nMit freundlichen Gruessen`
@@ -54,10 +56,10 @@ function VacationSettings({ vacation, onChange, account }: Props) {
       // Update parent state
       onChange(newVacation);
 
-      setSuccess(newEnabled ? "Abwesenheitsnotiz aktiviert" : "Abwesenheitsnotiz deaktiviert");
+      setSuccess(newEnabled ? t("vacation.activated", "Vacation notice activated") : t("vacation.deactivated", "Vacation notice deactivated"));
       setTimeout(() => setSuccess(null), 3000);
     } catch (e) {
-      setError(`Fehler: ${e}`);
+      setError(`${t("common.error")}: ${e}`);
       setEnabled(!newEnabled); // Revert on error
     } finally {
       setSaving(false);
@@ -84,10 +86,10 @@ function VacationSettings({ vacation, onChange, account }: Props) {
       // Update parent state
       onChange(newVacation);
 
-      setSuccess("Einstellungen gespeichert");
+      setSuccess(t("settings.saved"));
       setTimeout(() => setSuccess(null), 3000);
     } catch (e) {
-      setError(`Fehler beim Speichern: ${e}`);
+      setError(`${t("errors.saveFailed")}: ${e}`);
     } finally {
       setSaving(false);
     }
@@ -176,7 +178,7 @@ require ["vacation"`;
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h4 className="font-medium text-gray-700">Abwesenheitsnotiz (Out-of-Office)</h4>
+        <h4 className="font-medium text-gray-700">{t("vacation.title")}</h4>
         <label className="relative inline-flex items-center cursor-pointer">
           <input
             type="checkbox"
@@ -187,7 +189,7 @@ require ["vacation"`;
           />
           <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
           <span className="ml-3 text-sm font-medium text-gray-700">
-            {enabled ? "Aktiv" : "Inaktiv"}
+            {enabled ? t("vacation.enabled") : t("vacation.disabled")}
           </span>
         </label>
       </div>
@@ -207,7 +209,7 @@ require ["vacation"`;
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Startdatum (optional)
+            {t("vacation.startDate")} ({t("vacation.optional", "optional")})
           </label>
           <input
             type="date"
@@ -218,7 +220,7 @@ require ["vacation"`;
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Enddatum (optional)
+            {t("vacation.endDate")} ({t("vacation.optional", "optional")})
           </label>
           <input
             type="date"
@@ -231,27 +233,27 @@ require ["vacation"`;
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Betreff der Antwort
+          {t("vacation.subject")}
         </label>
         <input
           type="text"
           value={subject}
           onChange={(e) => setSubject(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="z.B. Abwesend"
+          placeholder={t("vacation.subjectPlaceholder", "e.g. Out of Office")}
         />
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Nachricht
+          {t("vacation.message")}
         </label>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           rows={6}
           className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          placeholder="Ihre Abwesenheitsnotiz..."
+          placeholder={t("vacation.messagePlaceholder", "Your vacation notice...")}
         />
       </div>
 
@@ -261,15 +263,13 @@ require ["vacation"`;
           disabled={saving}
           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
         >
-          {saving ? "Speichern..." : "Einstellungen speichern"}
+          {saving ? t("vacation.saving", "Saving...") : t("vacation.save")}
         </button>
       </div>
 
       <div className="text-xs text-gray-500 mt-4">
         <p>
-          <strong>Hinweis:</strong> Die Abwesenheitsnotiz wird ueber das Sieve-Protokoll auf dem
-          Mailserver gespeichert. Jede eingehende E-Mail wird automatisch mit der konfigurierten
-          Nachricht beantwortet (maximal einmal pro Tag pro Absender).
+          <strong>{t("vacation.note", "Note")}:</strong> {t("vacation.noteText", "The vacation notice is saved on the mail server via the Sieve protocol. Each incoming email will automatically be replied to with the configured message (at most once per day per sender).")}
         </p>
       </div>
     </div>

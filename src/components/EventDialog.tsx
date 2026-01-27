@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { CalendarEvent, Calendar, EventAttendee } from "../types/mail";
 
 interface Props {
@@ -20,6 +21,7 @@ function EventDialog({
   onSave,
   onDelete,
 }: Props) {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
   const [location, setLocation] = useState("");
@@ -154,7 +156,7 @@ function EventDialog({
       <div className="bg-white rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col">
         <div className="px-6 py-4 border-b flex items-center justify-between">
           <h2 className="text-lg font-semibold">
-            {isEditing ? "Termin bearbeiten" : "Neuer Termin"}
+            {isEditing ? t("calendar.editEvent") : t("calendar.newEvent")}
           </h2>
           <button
             onClick={onClose}
@@ -176,7 +178,7 @@ function EventDialog({
           {/* Title */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Titel *
+              {t("calendar.eventTitle")} *
             </label>
             <input
               type="text"
@@ -226,7 +228,7 @@ function EventDialog({
                 className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
               />
               <label htmlFor="allDay" className="text-sm text-gray-700">
-                Ganztaegig
+                {t("calendar.allDay")}
               </label>
             </div>
             <div className="flex items-center gap-2">
@@ -318,7 +320,7 @@ function EventDialog({
           {/* Location */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Ort
+              {t("calendar.eventLocation")}
             </label>
             <input
               type="text"
@@ -332,7 +334,7 @@ function EventDialog({
           {/* Description */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Beschreibung
+              {t("calendar.eventDescription")}
             </label>
             <textarea
               value={description}
@@ -450,7 +452,7 @@ function EventDialog({
                 disabled={saving}
                 className="px-4 py-2 text-red-600 hover:text-red-800 disabled:opacity-50"
               >
-                Loeschen
+                {t("common.delete")}
               </button>
             )}
           </div>
@@ -460,14 +462,14 @@ function EventDialog({
               disabled={saving}
               className="px-4 py-2 text-gray-600 hover:text-gray-800 disabled:opacity-50"
             >
-              Abbrechen
+              {t("common.cancel")}
             </button>
             <button
               onClick={handleSave}
               disabled={saving}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              {saving ? "Speichern..." : "Speichern"}
+              {saving ? `${t("common.save")}...` : t("common.save")}
             </button>
           </div>
         </div>

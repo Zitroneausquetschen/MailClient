@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Email, OutgoingEmail, OutgoingAttachment, Contact, SavedAccount } from "../types/mail";
 import RichTextEditor from "./RichTextEditor";
@@ -168,6 +169,7 @@ function AutocompleteInput({
 }
 
 function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props) {
+  const { t } = useTranslation();
   const [to, setTo] = useState("");
   const [cc, setCc] = useState("");
   const [bcc, setBcc] = useState("");
@@ -338,7 +340,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
     const bccList = parseRecipients(bcc);
 
     if (toList.length === 0) {
-      setError("Bitte gib mindestens einen Empfaenger an.");
+      setError(t("email.recipientRequired"));
       return;
     }
 
@@ -366,7 +368,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
       });
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
-      setError(`Fehler beim Senden: ${errorMsg}`);
+      setError(t("email.sendError", { error: errorMsg }));
     }
   };
 
@@ -374,20 +376,20 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
     <div className="h-full flex flex-col p-4">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-gray-800">
-          {replyTo ? "Antworten" : "Neue E-Mail"}
+          {replyTo ? t("email.reply") : t("email.newEmail")}
         </h2>
         <div className="flex items-center gap-4">
           {loadingContacts && (
-            <span className="text-sm text-gray-400">Kontakte laden...</span>
+            <span className="text-sm text-gray-400">{t("email.loadingContacts")}</span>
           )}
           {!loadingContacts && contacts.length > 0 && (
-            <span className="text-sm text-gray-400">{contacts.length} Kontakte</span>
+            <span className="text-sm text-gray-400">{t("email.contactsCount", { count: contacts.length })}</span>
           )}
           <button
             onClick={onCancel}
             className="text-gray-500 hover:text-gray-700"
           >
-            Abbrechen
+            {t("common.cancel")}
           </button>
         </div>
       </div>
@@ -401,51 +403,48 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
       <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
         <div className="space-y-3 mb-4">
           <AutocompleteInput
-            label="An"
+            label={t("email.to")}
             value={to}
             onChange={setTo}
             contacts={contacts}
-            placeholder="empfaenger@example.com"
+            placeholder="recipient@example.com"
             required
           />
           <AutocompleteInput
-            label="CC"
+            label={t("email.cc")}
             value={cc}
             onChange={setCc}
             contacts={contacts}
-            placeholder="Optional"
           />
           <AutocompleteInput
-            label="BCC"
+            label={t("email.bcc")}
             value={bcc}
             onChange={setBcc}
             contacts={contacts}
-            placeholder="Optional"
           />
           <div className="flex items-center">
-            <label className="w-16 text-sm text-gray-600">Betreff:</label>
+            <label className="w-16 text-sm text-gray-600">{t("email.subject")}:</label>
             <input
               type="text"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
               className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Betreff eingeben..."
             />
           </div>
 
           {/* Signature selector */}
           {signatures.length > 0 && (
             <div className="flex items-center">
-              <label className="w-16 text-sm text-gray-600">Signatur:</label>
+              <label className="w-16 text-sm text-gray-600">{t("email.signature")}:</label>
               <select
                 value={selectedSignatureId || "none"}
                 onChange={(e) => handleSignatureChange(e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="none">Keine Signatur</option>
+                <option value="none">{t("email.noSignature")}</option>
                 {signatures.map((sig) => (
                   <option key={sig.id} value={sig.id}>
-                    {sig.name} {sig.isDefault ? "(Standard)" : ""}
+                    {sig.name} {sig.isDefault ? `(${t("signatures.default")})` : ""}
                   </option>
                 ))}
               </select>
@@ -462,7 +461,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
           <RichTextEditor
             content={bodyHtml}
             onChange={handleEditorChange}
-            placeholder="Nachricht eingeben..."
+            placeholder={t("email.enterMessage")}
             className="h-full"
             minHeight="250px"
           />
@@ -484,11 +483,11 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
               className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2"
             >
               <span>📎</span>
-              Anhang hinzufuegen
+              {t("email.addAttachment")}
             </button>
             {attachments.length > 0 && (
               <span className="text-sm text-gray-500">
-                {attachments.length} Anhang{attachments.length !== 1 ? "e" : ""} ({formatFileSize(attachments.reduce((sum, a) => sum + a.size, 0))})
+                {t("email.attachment", { count: attachments.length })} ({formatFileSize(attachments.reduce((sum, a) => sum + a.size, 0))})
               </span>
             )}
           </div>
@@ -512,7 +511,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
                     type="button"
                     onClick={() => handleRemoveAttachment(i)}
                     className="text-red-500 hover:text-red-700 ml-1"
-                    title="Entfernen"
+                    title={t("email.remove")}
                   >
                     ✕
                   </button>
@@ -523,7 +522,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
 
           {isDragging && (
             <div className="mt-2 p-4 border-2 border-dashed border-blue-400 rounded bg-blue-50 text-center text-blue-600">
-              Dateien hier ablegen
+              {t("email.dropFilesHere")}
             </div>
           )}
         </div>
@@ -534,7 +533,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
             disabled={loading}
             className="px-6 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
           >
-            {loading ? "Sende..." : "Senden"}
+            {loading ? t("email.sending") : t("email.send")}
           </button>
         </div>
       </form>

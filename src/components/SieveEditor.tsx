@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import { SieveScript, SieveRule, Folder } from "../types/mail";
 
 interface Props {
@@ -13,6 +14,7 @@ interface Props {
 }
 
 function SieveEditor({ host, username, password, folders, onClose, pendingRule, onPendingRuleHandled }: Props) {
+  const { t } = useTranslation();
   const [scripts, setScripts] = useState<SieveScript[]>([]);
   const [selectedScript, setSelectedScript] = useState<string | null>(null);
   const [rules, setRules] = useState<SieveRule[]>([]);
@@ -182,7 +184,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
   const addRule = () => {
     const newRule: SieveRule = {
       id: `rule_${Date.now()}`,
-      name: "Neue Regel",
+      name: t("sieve.newRule", "New rule"),
       enabled: true,
       conditions: [{ field: "from", operator: "contains", value: "" }],
       actions: [{ actionType: "fileinto", value: "INBOX" }],
@@ -220,19 +222,19 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
     <div className="h-full flex flex-col bg-white">
       {/* Header */}
       <div className="border-b px-4 py-3 flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-gray-800">Sieve Filterregeln</h2>
+        <h2 className="text-xl font-semibold text-gray-800">{t("sieve.title")}</h2>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowRawEditor(!showRawEditor)}
             className="px-3 py-1 text-sm text-gray-600 hover:text-gray-800"
           >
-            {showRawEditor ? "Visueller Editor" : "Raw Script"}
+            {showRawEditor ? t("sieve.visualEditor", "Visual Editor") : t("sieve.rawScript", "Raw Script")}
           </button>
           <button
             onClick={onClose}
             className="px-3 py-1 text-gray-600 hover:text-gray-800"
           >
-            Schliessen
+            {t("settings.close")}
           </button>
         </div>
       </div>
@@ -250,12 +252,12 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
         {/* Script list */}
         <div className="w-48 border-r p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium text-gray-700">Skripte</h3>
+            <h3 className="text-sm font-medium text-gray-700">{t("sieve.scripts", "Scripts")}</h3>
             <button
               onClick={createNewScript}
               className="text-blue-600 hover:text-blue-800 text-sm"
             >
-              + Neu
+              + {t("sieve.new", "New")}
             </button>
           </div>
           {scripts.map((script) => (
@@ -274,7 +276,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
               <span className="text-sm truncate">{script.name}</span>
               {script.active && (
                 <span className="text-xs bg-green-500 text-white px-1 rounded">
-                  Aktiv
+                  {t("sieve.active")}
                 </span>
               )}
             </div>
@@ -300,13 +302,13 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                   onClick={() => setShowRawEditor(false)}
                   className="px-4 py-2 text-gray-600 hover:text-gray-800"
                 >
-                  Abbrechen
+                  {t("sieve.cancel")}
                 </button>
                 <button
                   onClick={saveRawScript}
                   className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                 >
-                  Speichern
+                  {t("sieve.save")}
                 </button>
               </div>
             </div>
@@ -320,7 +322,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                       onClick={() => activateScript(selectedScript)}
                       className="text-sm text-blue-600 hover:text-blue-800"
                     >
-                      Aktivieren
+                      {t("sieve.activate", "Activate")}
                     </button>
                   )}
                 </div>
@@ -329,13 +331,13 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                     onClick={addRule}
                     className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700"
                   >
-                    + Regel
+                    + {t("sieve.rule", "Rule")}
                   </button>
                   <button
                     onClick={saveRules}
                     className="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700"
                   >
-                    Speichern
+                    {t("sieve.save")}
                   </button>
                 </div>
               </div>
@@ -364,28 +366,28 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                           onClick={() => setEditingRule({ ...rule })}
                           className="text-blue-600 hover:text-blue-800 text-sm"
                         >
-                          Bearbeiten
+                          {t("sieve.editRule")}
                         </button>
                         <button
                           onClick={() => deleteRule(rule.id)}
                           className="text-red-600 hover:text-red-800 text-sm"
                         >
-                          Löschen
+                          {t("sieve.deleteRule")}
                         </button>
                       </div>
                     </div>
                     <div className="text-sm text-gray-600">
                       <div>
-                        <strong>Wenn:</strong>{" "}
+                        <strong>{t("sieve.if", "If")}:</strong>{" "}
                         {rule.conditions.map((c, i) => (
                           <span key={i}>
-                            {i > 0 && " UND "}
+                            {i > 0 && ` ${t("sieve.and", "AND")} `}
                             {c.field} {c.operator} "{c.value}"
                           </span>
                         ))}
                       </div>
                       <div>
-                        <strong>Dann:</strong>{" "}
+                        <strong>{t("sieve.then", "Then")}:</strong>{" "}
                         {rule.actions.map((a, i) => (
                           <span key={i}>
                             {i > 0 && ", "}
@@ -400,14 +402,14 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
 
                 {rules.length === 0 && (
                   <div className="text-center text-gray-500 py-8">
-                    Keine Regeln vorhanden. Klicke auf "+ Regel" um eine zu erstellen.
+                    {t("sieve.noRules", "No rules. Click \"+ Rule\" to create one.")}
                   </div>
                 )}
               </div>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-gray-500">
-              Wähle ein Skript aus oder erstelle ein neues
+              {t("sieve.selectOrCreate", "Select a script or create a new one")}
             </div>
           )}
         </div>
@@ -417,11 +419,11 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
       {editingRule && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto">
-            <h3 className="text-lg font-semibold mb-4">Regel bearbeiten</h3>
+            <h3 className="text-lg font-semibold mb-4">{t("sieve.editRule")}</h3>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Name</label>
+                <label className="block text-sm font-medium mb-1">{t("sieve.ruleName")}</label>
                 <input
                   type="text"
                   value={editingRule.name}
@@ -433,7 +435,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">Bedingungen</label>
+                <label className="block text-sm font-medium mb-2">{t("sieve.conditions")}</label>
                 {editingRule.conditions.map((cond, i) => (
                   <div key={i} className="flex gap-2 mb-2">
                     <select
@@ -445,9 +447,9 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                       }}
                       className="px-2 py-1 border border-gray-300 rounded text-sm"
                     >
-                      <option value="from">Absender</option>
-                      <option value="to">Empfänger</option>
-                      <option value="subject">Betreff</option>
+                      <option value="from">{t("sieve.fieldFrom", "From")}</option>
+                      <option value="to">{t("sieve.fieldTo", "To")}</option>
+                      <option value="subject">{t("sieve.fieldSubject", "Subject")}</option>
                     </select>
                     <select
                       value={cond.operator}
@@ -458,9 +460,9 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                       }}
                       className="px-2 py-1 border border-gray-300 rounded text-sm"
                     >
-                      <option value="contains">enthält</option>
-                      <option value="is">ist gleich</option>
-                      <option value="matches">entspricht</option>
+                      <option value="contains">{t("sieve.opContains", "contains")}</option>
+                      <option value="is">{t("sieve.opIs", "is")}</option>
+                      <option value="matches">{t("sieve.opMatches", "matches")}</option>
                     </select>
                     <input
                       type="text"
@@ -471,7 +473,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                         setEditingRule({ ...editingRule, conditions: newConds });
                       }}
                       className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
-                      placeholder="Wert..."
+                      placeholder={t("sieve.valuePlaceholder", "Value...")}
                     />
                     {editingRule.conditions.length > 1 && (
                       <button
@@ -500,12 +502,12 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                   }
                   className="text-sm text-blue-600 hover:text-blue-800"
                 >
-                  + Bedingung
+                  + {t("sieve.addCondition", "Condition")}
                 </button>
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">Aktionen</label>
+                <label className="block text-sm font-medium mb-2">{t("sieve.actions")}</label>
                 {editingRule.actions.map((action, i) => (
                   <div key={i} className="flex gap-2 mb-2">
                     <select
@@ -517,11 +519,11 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                       }}
                       className="px-2 py-1 border border-gray-300 rounded text-sm"
                     >
-                      <option value="fileinto">Verschieben nach</option>
-                      <option value="redirect">Weiterleiten an</option>
-                      <option value="discard">Löschen</option>
-                      <option value="keep">Behalten</option>
-                      <option value="flag">Markieren</option>
+                      <option value="fileinto">{t("sieve.actionMoveTo", "Move to")}</option>
+                      <option value="redirect">{t("sieve.actionRedirect", "Redirect to")}</option>
+                      <option value="discard">{t("sieve.actionDiscard", "Discard")}</option>
+                      <option value="keep">{t("sieve.actionKeep", "Keep")}</option>
+                      <option value="flag">{t("sieve.actionFlag", "Flag")}</option>
                     </select>
                     {(action.actionType === "fileinto" ||
                       action.actionType === "redirect" ||
@@ -536,7 +538,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                           }}
                           className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm"
                         >
-                          <option value="">Ordner wählen...</option>
+                          <option value="">{t("sieve.selectFolder", "Select folder...")}</option>
                           {folders.map((f) => (
                             <option key={f.name} value={f.name}>
                               {f.name}
@@ -588,7 +590,7 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                   }
                   className="text-sm text-blue-600 hover:text-blue-800"
                 >
-                  + Aktion
+                  + {t("sieve.addAction", "Action")}
                 </button>
               </div>
             </div>
@@ -598,13 +600,13 @@ function SieveEditor({ host, username, password, folders, onClose, pendingRule, 
                 onClick={() => setEditingRule(null)}
                 className="px-4 py-2 text-gray-600 hover:text-gray-800"
               >
-                Abbrechen
+                {t("sieve.cancel")}
               </button>
               <button
                 onClick={saveRule}
                 className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
-                Speichern
+                {t("sieve.save")}
               </button>
             </div>
           </div>

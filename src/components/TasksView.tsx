@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { CalDavTask, Calendar, SavedAccount } from "../types/mail";
 
@@ -25,6 +26,7 @@ function levelToCaldavPriority(level: "low" | "medium" | "high"): number {
 }
 
 function TasksView({ currentAccount, onClose }: Props) {
+  const { t } = useTranslation();
   const [tasks, setTasks] = useState<CalDavTask[]>([]);
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>("personal");
@@ -53,7 +55,7 @@ function TasksView({ currentAccount, onClose }: Props) {
         }
       } catch (e) {
         console.error("Failed to load calendars:", e);
-        setError("Kalender konnten nicht geladen werden");
+        setError(t("errors.loadFailed"));
       }
     };
 
@@ -77,7 +79,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       setTasks(result);
     } catch (e) {
       console.error("Failed to load tasks:", e);
-      setError("Aufgaben konnten nicht geladen werden: " + String(e));
+      setError(t("errors.loadFailed") + ": " + String(e));
     } finally {
       setLoading(false);
     }
@@ -128,7 +130,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       setTasks(tasks.map(t => t.id === task.id ? updatedTask : t));
     } catch (e) {
       console.error("Failed to toggle task:", e);
-      setError("Aufgabe konnte nicht aktualisiert werden");
+      setError(t("errors.saveFailed"));
     }
   };
 
@@ -146,7 +148,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       setTasks(tasks.filter(t => t.id !== taskId));
     } catch (e) {
       console.error("Failed to delete task:", e);
-      setError("Aufgabe konnte nicht geloescht werden");
+      setError(t("errors.deleteFailed"));
     }
   };
 
@@ -177,7 +179,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       setEditingTask(null);
     } catch (e) {
       console.error("Failed to save task:", e);
-      setError("Aufgabe konnte nicht gespeichert werden: " + String(e));
+      setError(t("errors.saveFailed") + ": " + String(e));
     }
   };
 
@@ -187,7 +189,7 @@ function TasksView({ currentAccount, onClose }: Props) {
   if (!currentAccount) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
-        <p>Bitte waehle ein Konto aus</p>
+        <p>{t("accounts.select")}</p>
       </div>
     );
   }
@@ -197,9 +199,9 @@ function TasksView({ currentAccount, onClose }: Props) {
       {/* Header */}
       <div className="bg-white border-b px-6 py-4 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-gray-800">Aufgaben</h2>
+          <h2 className="text-xl font-semibold text-gray-800">{t("tasks.title")}</h2>
           <p className="text-sm text-gray-500">
-            {completedCount} von {totalCount} erledigt
+            {completedCount} / {totalCount} {t("tasks.statusCompleted").toLowerCase()}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -221,7 +223,7 @@ function TasksView({ currentAccount, onClose }: Props) {
             onClick={loadTasks}
             disabled={loading}
             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-            title="Aktualisieren"
+            title={t("common.refresh")}
           >
             <svg className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -237,7 +239,7 @@ function TasksView({ currentAccount, onClose }: Props) {
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Neue Aufgabe
+            {t("tasks.add")}
           </button>
           {onClose && (
             <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
@@ -253,7 +255,7 @@ function TasksView({ currentAccount, onClose }: Props) {
       {error && (
         <div className="bg-red-50 border-b border-red-200 px-6 py-3 text-red-700 text-sm">
           {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">Schliessen</button>
+          <button onClick={() => setError(null)} className="ml-2 underline">{t("common.close")}</button>
         </div>
       )}
 
@@ -270,7 +272,7 @@ function TasksView({ currentAccount, onClose }: Props) {
                   : "border-transparent text-gray-500 hover:text-gray-700"
               }`}
             >
-              {f === "all" ? "Alle" : f === "active" ? "Offen" : "Erledigt"}
+              {f === "all" ? t("common.all") : f === "active" ? t("tasks.statusOpen") : t("tasks.statusCompleted")}
               <span className="ml-2 text-xs bg-gray-100 px-2 py-0.5 rounded-full">
                 {f === "all"
                   ? tasks.length
@@ -290,15 +292,15 @@ function TasksView({ currentAccount, onClose }: Props) {
             <svg className="w-8 h-8 mx-auto mb-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-            <p>Lade Aufgaben...</p>
+            <p>{t("common.loading")}</p>
           </div>
         ) : sortedTasks.length === 0 ? (
           <div className="text-center py-12 text-gray-400">
             <svg className="w-16 h-16 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
-            <p className="text-lg">Keine Aufgaben</p>
-            <p className="text-sm mt-2">Erstelle eine neue Aufgabe um loszulegen</p>
+            <p className="text-lg">{t("tasks.noTasks")}</p>
+            <p className="text-sm mt-2">{t("tasks.add")}</p>
           </div>
         ) : (
           <div className="space-y-2 max-w-3xl mx-auto">
@@ -342,6 +344,7 @@ interface TaskItemProps {
 }
 
 function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
+  const { t } = useTranslation();
   const priorityLevel = caldavPriorityToLevel(task.priority);
 
   const priorityColors = {
@@ -351,9 +354,9 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
   };
 
   const priorityLabels = {
-    high: "Hoch",
-    medium: "Mittel",
-    low: "Niedrig",
+    high: t("tasks.priorityHigh"),
+    medium: t("tasks.priorityMedium"),
+    low: t("tasks.priorityLow"),
   };
 
   const isOverdue = task.due && !task.completed && new Date(task.due) < new Date();
@@ -408,7 +411,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               {new Date(task.due).toLocaleDateString("de-DE")}
-              {isOverdue && " (ueberfaellig)"}
+              {isOverdue && ` (${t("tasks.overdue") || "overdue"})`}
             </span>
           )}
         </div>
@@ -419,7 +422,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
         <button
           onClick={onEdit}
           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-          title="Bearbeiten"
+          title={t("tasks.edit")}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -428,7 +431,7 @@ function TaskItem({ task, onToggle, onEdit, onDelete }: TaskItemProps) {
         <button
           onClick={onDelete}
           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded"
-          title="Loeschen"
+          title={t("common.delete")}
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -447,6 +450,7 @@ interface TaskDialogProps {
 }
 
 function TaskDialog({ task, calendarId, onSave, onCancel }: TaskDialogProps) {
+  const { t } = useTranslation();
   const [summary, setSummary] = useState(task?.summary || "");
   const [description, setDescription] = useState(task?.description || "");
   const [priority, setPriority] = useState<"low" | "medium" | "high">(
@@ -484,57 +488,57 @@ function TaskDialog({ task, calendarId, onSave, onCancel }: TaskDialogProps) {
         <form onSubmit={handleSubmit}>
           <div className="px-6 py-4 border-b">
             <h3 className="text-lg font-semibold">
-              {task ? "Aufgabe bearbeiten" : "Neue Aufgabe"}
+              {task ? t("tasks.edit") : t("tasks.add")}
             </h3>
           </div>
 
           <div className="px-6 py-4 space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Titel *
+                {t("tasks.taskTitle")} *
               </label>
               <input
                 type="text"
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Was muss erledigt werden?"
+                placeholder={t("tasks.taskTitle")}
                 autoFocus
               />
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Beschreibung
+                {t("tasks.description")}
               </label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-                placeholder="Optionale Details..."
+                placeholder={t("tasks.description")}
               />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Prioritaet
+                  {t("tasks.priority")}
                 </label>
                 <select
                   value={priority}
                   onChange={(e) => setPriority(e.target.value as "low" | "medium" | "high")}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="low">Niedrig</option>
-                  <option value="medium">Mittel</option>
-                  <option value="high">Hoch</option>
+                  <option value="low">{t("tasks.priorityLow")}</option>
+                  <option value="medium">{t("tasks.priorityMedium")}</option>
+                  <option value="high">{t("tasks.priorityHigh")}</option>
                 </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Faellig am
+                  {t("tasks.dueDate")}
                 </label>
                 <input
                   type="date"
@@ -552,14 +556,14 @@ function TaskDialog({ task, calendarId, onSave, onCancel }: TaskDialogProps) {
               onClick={onCancel}
               className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg"
             >
-              Abbrechen
+              {t("common.cancel")}
             </button>
             <button
               type="submit"
               disabled={!summary.trim()}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              {task ? "Speichern" : "Erstellen"}
+              {t("common.save")}
             </button>
           </div>
         </form>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "react-i18next";
 import ConnectionForm from "./components/ConnectionForm";
 import FolderList from "./components/FolderList";
 import EmailList from "./components/EmailList";
@@ -23,6 +24,8 @@ type MainTab = "email" | "calendar" | "contacts" | "tasks" | "notes";
 type EmailSubView = "inbox" | "compose" | "sieve";
 
 function App() {
+  const { t } = useTranslation();
+
   // Main tab state
   const [mainTab, setMainTab] = useState<MainTab>("email");
   const [showSettings, setShowSettings] = useState(false);
@@ -384,7 +387,7 @@ function App() {
     if (!activeAccountId) return;
 
     if (!activeAccountSettings?.cache_enabled) {
-      setError("Suche erfordert aktivierten Cache. Bitte in den Einstellungen aktivieren.");
+      setError(t("search.cacheRequired", "Search requires cache to be enabled. Please enable in settings."));
       return;
     }
 
@@ -397,7 +400,7 @@ function App() {
       setSearchResults(results);
     } catch (e) {
       console.error("Search failed:", e);
-      setError(`Suche fehlgeschlagen: ${e}`);
+      setError(`${t("search.failed", "Search failed")}: ${e}`);
     } finally {
       setSearching(false);
     }
@@ -413,7 +416,7 @@ function App() {
 
     const isCacheEnabled = activeAccountSettings?.cache_enabled ?? false;
     if (!isCacheEnabled) {
-      setError("Bitte aktiviere zuerst den Cache in den Einstellungen.");
+      setError(t("sync.cacheRequired", "Please enable cache in settings first."));
       return;
     }
 
@@ -474,7 +477,7 @@ function App() {
         }
       }
     } catch (e) {
-      showError(`Synchronisierung fehlgeschlagen: ${e}`);
+      showError(`${t("sync.syncError")}: ${e}`);
     } finally {
       setSyncing(false);
       setSyncProgress(null);
@@ -827,7 +830,7 @@ function App() {
     const senderEmail = extractEmailAddress(email.from);
     const newRule: SieveRule = {
       id: crypto.randomUUID(),
-      name: `Regel fuer ${senderEmail}`,
+      name: `${t("sieve.ruleFor", "Rule for")} ${senderEmail}`,
       enabled: true,
       conditions: [
         {
@@ -850,12 +853,12 @@ function App() {
   const getContextMenuItems = (email: EmailHeader): ContextMenuItem[] => {
     return [
       {
-        label: "Oeffnen",
+        label: t("contextMenu.open", "Open"),
         icon: "M",
         onClick: () => handleSelectEmail(email.uid),
       },
       {
-        label: "Antworten",
+        label: t("email.reply"),
         icon: "A",
         onClick: async () => {
           const fullEmail = await invoke<Email>("fetch_email", {
@@ -868,31 +871,31 @@ function App() {
       },
       { label: "", onClick: () => {}, separator: true },
       {
-        label: email.isFlagged ? "Markierung entfernen" : "Markieren",
+        label: email.isFlagged ? t("email.unmarkFlagged") : t("email.markFlagged"),
         icon: email.isFlagged ? "☆" : "★",
         onClick: () => handleToggleFlag(email.uid, email.isFlagged),
       },
       {
-        label: email.isRead ? "Als ungelesen markieren" : "Als gelesen markieren",
+        label: email.isRead ? t("email.markUnread") : t("email.markRead"),
         icon: email.isRead ? "●" : "○",
         onClick: () => email.isRead ? handleMarkUnread(email.uid) : handleSelectEmail(email.uid),
       },
       { label: "", onClick: () => {}, separator: true },
       {
-        label: "In Ordner verschieben",
+        label: t("email.move"),
         icon: "O",
         onClick: () => {
           handleSelectEmail(email.uid);
         },
       },
       {
-        label: "Loeschen",
+        label: t("email.delete"),
         icon: "L",
         onClick: () => handleDeleteEmail(email.uid),
       },
       { label: "", onClick: () => {}, separator: true },
       {
-        label: "Regel erstellen...",
+        label: t("contextMenu.createRule", "Create rule..."),
         icon: "R",
         onClick: () => handleCreateRuleFromEmail(email),
       },
@@ -938,7 +941,7 @@ function App() {
       <div className="h-full flex items-center justify-center bg-gray-100">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Verbinde Konten...</p>
+          <p className="text-gray-600">{t("accounts.connecting")}</p>
         </div>
       </div>
     );
@@ -979,9 +982,9 @@ function App() {
                       }
                     }}
                     className="flex items-center gap-1 px-2 py-1 bg-blue-500 text-white text-xs rounded-full hover:bg-blue-600 transition-colors"
-                    title="Neue E-Mails anzeigen"
+                    title={t("email.showNew", "Show new emails")}
                   >
-                    <span>{newEmailCount} neue</span>
+                    <span>{newEmailCount} {t("email.new", "new")}</span>
                   </button>
                 )}
               </div>
@@ -993,10 +996,10 @@ function App() {
                     type="text"
                     value={searchQuery}
                     onChange={(e) => handleSearch(e.target.value)}
-                    placeholder="E-Mails durchsuchen..."
+                    placeholder={t("search.placeholder")}
                     className="w-full px-4 py-1.5 pl-10 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
                     disabled={!activeAccountSettings?.cache_enabled}
-                    title={!activeAccountSettings?.cache_enabled ? "Cache muss aktiviert sein fuer die Suche" : ""}
+                    title={!activeAccountSettings?.cache_enabled ? t("search.cacheRequired") : ""}
                   />
                   <svg
                     className="absolute left-3 top-2 h-4 w-4 text-gray-400"
@@ -1055,7 +1058,7 @@ function App() {
                   <button
                     onClick={handleManualSync}
                     className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                    title="E-Mails synchronisieren"
+                    title={t("sync.syncEmails", "Sync emails")}
                   >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1072,7 +1075,7 @@ function App() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
-                    Neue E-Mail
+                    {t("email.newEmail")}
                   </button>
                   {/* Dropdown for window options */}
                   <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
@@ -1086,7 +1089,7 @@ function App() {
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                      Im Hauptfenster
+                      {t("email.inMainWindow", "In main window")}
                     </button>
                     <button
                       onClick={() => {
@@ -1100,7 +1103,7 @@ function App() {
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                       </svg>
-                      Neues Fenster
+                      {t("email.newWindow", "New window")}
                     </button>
                   </div>
                 </div>
@@ -1109,9 +1112,9 @@ function App() {
                   <button
                     onClick={() => setEmailSubView("sieve")}
                     className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded"
-                    title="Sieve Filterregeln"
+                    title={t("sieve.title")}
                   >
-                    Filter
+                    {t("sieve.filters", "Filters")}
                   </button>
                 )}
               </div>
@@ -1157,13 +1160,15 @@ function App() {
                     {searchResults !== null && (
                       <div className="px-4 py-2 bg-blue-50 border-b flex items-center justify-between">
                         <span className="text-sm text-blue-700">
-                          {searchResults.length} Ergebnis{searchResults.length !== 1 ? "se" : ""} fuer "{searchQuery}"
+                          {searchResults.length === 1
+                            ? t("search.results", { count: searchResults.length })
+                            : t("search.results_plural", { count: searchResults.length })} "{searchQuery}"
                         </span>
                         <button
                           onClick={clearSearch}
                           className="text-blue-600 hover:text-blue-800 text-sm"
                         >
-                          Zurueck
+                          {t("search.back")}
                         </button>
                       </div>
                     )}
@@ -1171,35 +1176,35 @@ function App() {
                     {selectedUids.size > 0 && (
                       <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-2">
                         <span className="text-sm text-blue-800 font-medium">
-                          {selectedUids.size} ausgewaehlt
+                          {t("bulk.selected", { count: selectedUids.size })}
                         </span>
                         <div className="flex-1 flex items-center gap-1">
                           <button
                             onClick={handleBulkMarkRead}
                             className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
-                            title="Als gelesen markieren"
+                            title={t("email.markRead")}
                           >
-                            Gelesen
+                            {t("bulk.markRead")}
                           </button>
                           <button
                             onClick={handleBulkMarkUnread}
                             className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
-                            title="Als ungelesen markieren"
+                            title={t("email.markUnread")}
                           >
-                            Ungelesen
+                            {t("bulk.markUnread")}
                           </button>
                           <button
                             onClick={handleBulkMarkFlagged}
                             className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
-                            title="Markieren"
+                            title={t("email.markFlagged")}
                           >
-                            ★ Markieren
+                            ★ {t("bulk.markFlagged")}
                           </button>
                           <div className="relative group">
                             <button
                               className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
                             >
-                              Verschieben ▾
+                              {t("bulk.move")} ▾
                             </button>
                             <div className="absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 hidden group-hover:block min-w-32">
                               {folders.filter(f => f.name !== selectedFolder).map((folder) => (
@@ -1216,22 +1221,22 @@ function App() {
                           <button
                             onClick={handleBulkDelete}
                             className="px-2 py-1 text-xs bg-red-50 border border-red-300 text-red-600 rounded hover:bg-red-100"
-                            title="Loeschen"
+                            title={t("email.delete")}
                           >
-                            Loeschen
+                            {t("bulk.delete")}
                           </button>
                         </div>
                         <button
                           onClick={handleSelectAll}
                           className="px-2 py-1 text-xs text-blue-600 hover:underline"
                         >
-                          Alle
+                          {t("common.all")}
                         </button>
                         <button
                           onClick={handleClearSelection}
                           className="px-2 py-1 text-xs text-gray-600 hover:underline"
                         >
-                          Abbrechen
+                          {t("common.cancel")}
                         </button>
                       </div>
                     )}
@@ -1263,7 +1268,7 @@ function App() {
                       />
                     ) : (
                       <div className="h-full flex items-center justify-center text-gray-400">
-                        Waehle eine E-Mail aus
+                        {t("email.selectEmailToRead")}
                       </div>
                     )}
                   </div>

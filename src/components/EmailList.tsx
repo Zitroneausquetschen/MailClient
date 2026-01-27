@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { EmailHeader } from "../types/mail";
 
 interface Props {
@@ -13,7 +14,7 @@ interface Props {
   multiSelectMode?: boolean;
 }
 
-function formatDate(dateStr: string): string {
+function formatDate(dateStr: string, locale: string, yesterdayText: string): string {
   try {
     const date = new Date(dateStr);
     const now = new Date();
@@ -22,22 +23,22 @@ function formatDate(dateStr: string): string {
 
     if (emailDate.getTime() === today.getTime()) {
       // Today: show time
-      return date.toLocaleTimeString("de-DE", {
+      return date.toLocaleTimeString(locale, {
         hour: "2-digit",
         minute: "2-digit",
       });
     } else if (emailDate.getTime() === today.getTime() - 86400000) {
       // Yesterday
-      return "Gestern";
+      return yesterdayText;
     } else if (date.getFullYear() === now.getFullYear()) {
       // This year: show day and month
-      return date.toLocaleDateString("de-DE", {
+      return date.toLocaleDateString(locale, {
         day: "2-digit",
         month: "2-digit",
       });
     } else {
       // Other years: show full date
-      return date.toLocaleDateString("de-DE", {
+      return date.toLocaleDateString(locale, {
         day: "2-digit",
         month: "2-digit",
         year: "2-digit",
@@ -73,10 +74,12 @@ function EmailList({
   onSelectionChange,
   multiSelectMode = false,
 }: Props) {
+  const { t, i18n } = useTranslation();
+
   if (loading && emails.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
-        Laden...
+        {t("common.loading")}
       </div>
     );
   }
@@ -84,7 +87,7 @@ function EmailList({
   if (emails.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
-        Keine E-Mails
+        {t("email.noEmails")}
       </div>
     );
   }
@@ -193,7 +196,7 @@ function EmailList({
               </span>
             </div>
             <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
-              {formatDate(email.date)}
+              {formatDate(email.date, i18n.language, t("common.yesterday"))}
             </span>
           </div>
           <div className="flex items-center gap-2">

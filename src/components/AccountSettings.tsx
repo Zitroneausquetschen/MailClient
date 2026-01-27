@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { SavedAccount, CacheStats, EmailSignature, VacationSettings as VacationSettingsType } from "../types/mail";
 import SignatureManager from "./SignatureManager";
@@ -12,6 +13,7 @@ interface Props {
 type SettingsTab = "general" | "signatures" | "vacation" | "app";
 
 function AccountSettings({ onClose }: Props) {
+  const { t, i18n } = useTranslation();
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [formData, setFormData] = useState<SavedAccount | null>(null);
@@ -37,7 +39,7 @@ function AccountSettings({ onClose }: Props) {
         selectAccount(savedAccounts[0].id, savedAccounts);
       }
     } catch (e) {
-      setMessage({ type: "error", text: `Fehler beim Laden: ${e}` });
+      setMessage({ type: "error", text: `${t("errors.loadFailed")}: ${e}` });
     }
   };
 
@@ -53,7 +55,7 @@ function AccountSettings({ onClose }: Props) {
         cache_body: account.cache_body ?? true,
         cache_attachments: account.cache_attachments ?? false,
         signatures: account.signatures ?? [],
-        vacation: account.vacation ?? { enabled: false, subject: "Abwesend", message: "" },
+        vacation: account.vacation ?? { enabled: false, subject: t("vacation.title"), message: "" },
       });
       setMessage(null);
       await loadCacheStats(id);
@@ -77,9 +79,9 @@ function AccountSettings({ onClose }: Props) {
     try {
       await invoke("clear_cache", { accountId: selectedAccountId });
       await loadCacheStats(selectedAccountId);
-      setMessage({ type: "success", text: "Cache wurde geleert" });
+      setMessage({ type: "success", text: t("settings.cacheCleared") });
     } catch (e) {
-      setMessage({ type: "error", text: `Fehler beim Leeren des Cache: ${e}` });
+      setMessage({ type: "error", text: `${t("common.error")}: ${e}` });
     } finally {
       setClearingCache(false);
     }
@@ -97,7 +99,7 @@ function AccountSettings({ onClose }: Props) {
     if (!dateStr) return "-";
     try {
       const date = new Date(dateStr);
-      return date.toLocaleDateString("de-DE");
+      return date.toLocaleDateString(i18n.language === "de" ? "de-DE" : "en-US");
     } catch {
       return dateStr;
     }
@@ -120,7 +122,7 @@ function AccountSettings({ onClose }: Props) {
     if (!formData) return;
 
     if (!formData.display_name || !formData.username || !formData.imap_host || !formData.smtp_host) {
-      setMessage({ type: "error", text: "Bitte alle Pflichtfelder ausfuellen" });
+      setMessage({ type: "error", text: t("errors.saveFailed") });
       return;
     }
 
@@ -130,9 +132,9 @@ function AccountSettings({ onClose }: Props) {
     try {
       await invoke("save_account", { account: formData });
       await loadAccounts();
-      setMessage({ type: "success", text: "Einstellungen gespeichert" });
+      setMessage({ type: "success", text: t("settings.saved") });
     } catch (e) {
-      setMessage({ type: "error", text: `Fehler beim Speichern: ${e}` });
+      setMessage({ type: "error", text: `${t("errors.saveFailed")}: ${e}` });
     } finally {
       setSaving(false);
     }
@@ -149,10 +151,10 @@ function AccountSettings({ onClose }: Props) {
   };
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: "general", label: "Allgemein" },
-    { id: "signatures", label: "Signaturen" },
-    { id: "vacation", label: "Abwesenheit" },
-    { id: "app", label: "App-Info" },
+    { id: "general", label: t("settings.general") },
+    { id: "signatures", label: t("settings.signatures") },
+    { id: "vacation", label: t("settings.vacation") },
+    { id: "app", label: t("settings.appInfo") },
   ];
 
   const handleCheckUpdate = async () => {
@@ -167,11 +169,11 @@ function AccountSettings({ onClose }: Props) {
     <div className="h-full flex flex-col">
       {/* Header */}
       <div className="border-b px-6 py-4 flex items-center justify-between">
-        <h2 className="text-xl font-semibold text-gray-800">Konto-Einstellungen</h2>
+        <h2 className="text-xl font-semibold text-gray-800">{t("settings.title")}</h2>
         <button
           onClick={onClose}
           className="text-gray-500 hover:text-gray-700"
-          title="Schliessen"
+          title={t("common.close")}
         >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -185,10 +187,10 @@ function AccountSettings({ onClose }: Props) {
         <div className="w-64 border-r bg-gray-50 overflow-y-auto">
           <div className="p-4">
             <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">
-              Konten
+              {t("accounts.title")}
             </h3>
             {accounts.length === 0 ? (
-              <p className="text-sm text-gray-500">Keine Konten gespeichert</p>
+              <p className="text-sm text-gray-500">{t("accounts.disconnected")}</p>
             ) : (
               <ul className="space-y-1">
                 {accounts.map((account) => (
@@ -224,7 +226,7 @@ function AccountSettings({ onClose }: Props) {
         <div className="flex-1 flex flex-col overflow-hidden">
           {!formData ? (
             <div className="h-full flex items-center justify-center text-gray-400">
-              Waehle ein Konto aus der Liste
+              {t("common.select")}
             </div>
           ) : (
             <>
@@ -268,7 +270,7 @@ function AccountSettings({ onClose }: Props) {
                       {/* Display Name */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Anzeigename
+                          {t("contacts.firstName")}
                         </label>
                         <input
                           type="text"
@@ -282,7 +284,7 @@ function AccountSettings({ onClose }: Props) {
                       {/* Username */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Benutzername / E-Mail
+                          {t("accounts.email")}
                         </label>
                         <input
                           type="text"
@@ -292,14 +294,14 @@ function AccountSettings({ onClose }: Props) {
                           disabled
                         />
                         <p className="text-xs text-gray-500 mt-1">
-                          Benutzername kann nicht geaendert werden
+                          {t("accounts.email")}
                         </p>
                       </div>
 
                       {/* Password */}
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Passwort
+                          {t("accounts.password")}
                         </label>
                         <input
                           type="password"
@@ -309,18 +311,18 @@ function AccountSettings({ onClose }: Props) {
                           placeholder="••••••••"
                         />
                         <p className="text-xs text-gray-500 mt-1">
-                          Leer lassen um das gespeicherte Passwort zu behalten
+                          {t("accounts.password")}
                         </p>
                       </div>
 
                       {/* Server Settings */}
                       <div className="border-t pt-4 mt-4">
-                        <h3 className="text-sm font-medium text-gray-700 mb-3">Server-Einstellungen</h3>
+                        <h3 className="text-sm font-medium text-gray-700 mb-3">{t("accounts.server")}</h3>
 
                         {/* IMAP */}
                         <div className="grid grid-cols-3 gap-2 mb-3">
                           <div className="col-span-2">
-                            <label className="block text-xs text-gray-500 mb-1">IMAP Server</label>
+                            <label className="block text-xs text-gray-500 mb-1">{t("accounts.imapServer")}</label>
                             <input
                               type="text"
                               value={formData.imap_host}
@@ -330,7 +332,7 @@ function AccountSettings({ onClose }: Props) {
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-500 mb-1">Port</label>
+                            <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
                             <input
                               type="number"
                               value={formData.imap_port}
@@ -343,7 +345,7 @@ function AccountSettings({ onClose }: Props) {
                         {/* SMTP */}
                         <div className="grid grid-cols-3 gap-2">
                           <div className="col-span-2">
-                            <label className="block text-xs text-gray-500 mb-1">SMTP Server</label>
+                            <label className="block text-xs text-gray-500 mb-1">{t("accounts.smtpServer")}</label>
                             <input
                               type="text"
                               value={formData.smtp_host}
@@ -353,7 +355,7 @@ function AccountSettings({ onClose }: Props) {
                             />
                           </div>
                           <div>
-                            <label className="block text-xs text-gray-500 mb-1">Port</label>
+                            <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
                             <input
                               type="number"
                               value={formData.smtp_port}
@@ -366,7 +368,7 @@ function AccountSettings({ onClose }: Props) {
 
                       {/* Cache Settings */}
                       <div className="border-t pt-4 mt-4">
-                        <h3 className="text-sm font-medium text-gray-700 mb-3">Cache-Einstellungen</h3>
+                        <h3 className="text-sm font-medium text-gray-700 mb-3">{t("settings.cache")}</h3>
 
                         {/* Enable Cache */}
                         <div className="flex items-center mb-4">
@@ -378,7 +380,7 @@ function AccountSettings({ onClose }: Props) {
                             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                           />
                           <label htmlFor="cacheEnabled" className="ml-2 block text-sm text-gray-700">
-                            E-Mails lokal cachen (fuer Offline-Nutzung und Suche)
+                            {t("settings.cacheEnabled")}
                           </label>
                         </div>
 
@@ -386,17 +388,17 @@ function AccountSettings({ onClose }: Props) {
                           <>
                             {/* Cache Duration */}
                             <div className="mb-4">
-                              <label className="block text-xs text-gray-500 mb-1">Zeitraum</label>
+                              <label className="block text-xs text-gray-500 mb-1">{t("settings.cacheDays")}</label>
                               <select
                                 value={formData.cache_days || 30}
                                 onChange={(e) => handleChange("cache_days", parseInt(e.target.value))}
                                 className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                               >
-                                <option value={7}>Letzte 7 Tage</option>
-                                <option value={30}>Letzte 30 Tage</option>
-                                <option value={90}>Letzte 90 Tage</option>
-                                <option value={365}>Letztes Jahr</option>
-                                <option value={0}>Unbegrenzt</option>
+                                <option value={7}>7</option>
+                                <option value={30}>30</option>
+                                <option value={90}>90</option>
+                                <option value={365}>365</option>
+                                <option value={0}>{t("common.all")}</option>
                               </select>
                             </div>
 
@@ -410,7 +412,7 @@ function AccountSettings({ onClose }: Props) {
                                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                               />
                               <label htmlFor="cacheBody" className="ml-2 block text-sm text-gray-700">
-                                E-Mail-Inhalt speichern (fuer Volltextsuche)
+                                {t("settings.cacheBody")}
                               </label>
                             </div>
 
@@ -424,39 +426,39 @@ function AccountSettings({ onClose }: Props) {
                                 className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                               />
                               <label htmlFor="cacheAttachments" className="ml-2 block text-sm text-gray-700">
-                                Anhaenge speichern (erhoeht Speicherverbrauch)
+                                {t("settings.cacheAttachments")}
                               </label>
                             </div>
 
                             {/* Cache Statistics */}
                             <div className="bg-gray-50 rounded p-3 mb-4">
-                              <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">Cache-Statistik</h4>
+                              <h4 className="text-xs font-medium text-gray-500 uppercase mb-2">{t("settings.cache")}</h4>
                               {cacheStats && cacheStats.emailCount > 0 ? (
                                 <div className="text-sm text-gray-700 space-y-1">
                                   <div className="flex justify-between">
-                                    <span>E-Mails:</span>
+                                    <span>{t("nav.email")}:</span>
                                     <span className="font-medium">{cacheStats.emailCount.toLocaleString()}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span>Anhaenge:</span>
+                                    <span>{t("email.attachments")}:</span>
                                     <span className="font-medium">{cacheStats.attachmentCount.toLocaleString()}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span>Speicher:</span>
+                                    <span>{t("settings.cache")}:</span>
                                     <span className="font-medium">{formatBytes(cacheStats.totalSizeBytes)}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span>Aelteste E-Mail:</span>
+                                    <span>{t("email.date")}:</span>
                                     <span className="font-medium">{formatDate(cacheStats.oldestEmail)}</span>
                                   </div>
                                   <div className="flex justify-between">
-                                    <span>Neueste E-Mail:</span>
+                                    <span>{t("email.date")}:</span>
                                     <span className="font-medium">{formatDate(cacheStats.newestEmail)}</span>
                                   </div>
                                 </div>
                               ) : (
                                 <div className="text-sm text-gray-500">
-                                  Noch keine E-Mails im Cache.
+                                  {t("email.noEmails")}
                                 </div>
                               )}
                             </div>
@@ -468,7 +470,7 @@ function AccountSettings({ onClose }: Props) {
                               disabled={clearingCache}
                               className="px-3 py-1.5 text-sm text-red-600 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              {clearingCache ? "Wird geleert..." : "Cache leeren"}
+                              {clearingCache ? t("common.loading") : t("settings.clearCache")}
                             </button>
                           </>
                         )}
@@ -481,14 +483,14 @@ function AccountSettings({ onClose }: Props) {
                           disabled={saving}
                           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
                         >
-                          {saving ? "Speichern..." : "Speichern"}
+                          {saving ? t("common.loading") : t("common.save")}
                         </button>
                         <button
                           onClick={handleCancel}
                           disabled={saving}
                           className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50 disabled:cursor-not-allowed"
                         >
-                          Abbrechen
+                          {t("common.cancel")}
                         </button>
                       </div>
                     </div>
@@ -508,7 +510,7 @@ function AccountSettings({ onClose }: Props) {
                           disabled={saving}
                           className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
                         >
-                          {saving ? "Speichern..." : "Alle Aenderungen speichern"}
+                          {saving ? t("common.loading") : t("common.save")}
                         </button>
                       </div>
                     </div>
@@ -525,7 +527,7 @@ function AccountSettings({ onClose }: Props) {
                   {activeTab === "app" && (
                     <div className="space-y-6">
                       <div>
-                        <h3 className="text-lg font-medium text-gray-900 mb-4">App-Informationen</h3>
+                        <h3 className="text-lg font-medium text-gray-900 mb-4">{t("settings.appInfo")}</h3>
 
                         <div className="bg-gray-50 rounded-lg p-4 mb-6">
                           <div className="flex items-center gap-3 mb-2">
@@ -535,14 +537,26 @@ function AccountSettings({ onClose }: Props) {
                               </svg>
                             </div>
                             <div>
-                              <h4 className="font-semibold text-gray-900">MailClient</h4>
-                              <p className="text-sm text-gray-500">Version 0.1.0</p>
+                              <h4 className="font-semibold text-gray-900">{t("app.name")}</h4>
+                              <p className="text-sm text-gray-500">{t("app.version", { version: "0.1.0" })}</p>
                             </div>
                           </div>
                         </div>
 
+                        <div className="border rounded-lg p-4 mb-4">
+                          <h4 className="font-medium text-gray-900 mb-3">{t("settings.language")}</h4>
+                          <select
+                            value={i18n.language}
+                            onChange={(e) => i18n.changeLanguage(e.target.value)}
+                            className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="de">Deutsch</option>
+                            <option value="en">English</option>
+                          </select>
+                        </div>
+
                         <div className="border rounded-lg p-4">
-                          <h4 className="font-medium text-gray-900 mb-3">Updates</h4>
+                          <h4 className="font-medium text-gray-900 mb-3">{t("updates.title")}</h4>
 
                           <div className="flex items-center gap-3">
                             <button
@@ -556,14 +570,14 @@ function AccountSettings({ onClose }: Props) {
                                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                   </svg>
-                                  Prüfe...
+                                  {t("updates.checking")}
                                 </>
                               ) : (
                                 <>
                                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                   </svg>
-                                  Nach Updates suchen
+                                  {t("updates.checkForUpdates")}
                                 </>
                               )}
                             </button>
@@ -578,13 +592,13 @@ function AccountSettings({ onClose }: Props) {
                                   : "bg-gray-50 border border-gray-200"
                             }`}>
                               {updateResult.error ? (
-                                <p className="text-sm text-red-600">Fehler: {updateResult.error}</p>
+                                <p className="text-sm text-red-600">{t("updates.error")}: {updateResult.error}</p>
                               ) : updateResult.available ? (
                                 <p className="text-sm text-green-600">
-                                  Neue Version {updateResult.version} verfügbar! Die App wird beim nächsten Start aktualisiert.
+                                  {t("updates.available", { version: updateResult.version })}
                                 </p>
                               ) : (
-                                <p className="text-sm text-gray-600">Sie verwenden die aktuellste Version.</p>
+                                <p className="text-sm text-gray-600">{t("updates.notAvailable")}</p>
                               )}
                             </div>
                           )}
@@ -602,7 +616,7 @@ function AccountSettings({ onClose }: Props) {
             <div className="flex-1 p-6 overflow-y-auto">
               <div className="space-y-6">
                 <div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">App-Informationen</h3>
+                  <h3 className="text-lg font-medium text-gray-900 mb-4">{t("settings.appInfo")}</h3>
 
                   <div className="bg-gray-50 rounded-lg p-4 mb-6">
                     <div className="flex items-center gap-3 mb-2">
@@ -612,14 +626,26 @@ function AccountSettings({ onClose }: Props) {
                         </svg>
                       </div>
                       <div>
-                        <h4 className="font-semibold text-gray-900">MailClient</h4>
-                        <p className="text-sm text-gray-500">Version 0.1.0</p>
+                        <h4 className="font-semibold text-gray-900">{t("app.name")}</h4>
+                        <p className="text-sm text-gray-500">{t("app.version", { version: "0.1.0" })}</p>
                       </div>
                     </div>
                   </div>
 
+                  <div className="border rounded-lg p-4 mb-4">
+                    <h4 className="font-medium text-gray-900 mb-3">{t("settings.language")}</h4>
+                    <select
+                      value={i18n.language}
+                      onChange={(e) => i18n.changeLanguage(e.target.value)}
+                      className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="de">Deutsch</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
+
                   <div className="border rounded-lg p-4">
-                    <h4 className="font-medium text-gray-900 mb-3">Updates</h4>
+                    <h4 className="font-medium text-gray-900 mb-3">{t("updates.title")}</h4>
 
                     <div className="flex items-center gap-3">
                       <button
@@ -633,14 +659,14 @@ function AccountSettings({ onClose }: Props) {
                               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
-                            Prüfe...
+                            {t("updates.checking")}
                           </>
                         ) : (
                           <>
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                             </svg>
-                            Nach Updates suchen
+                            {t("updates.checkForUpdates")}
                           </>
                         )}
                       </button>
@@ -655,13 +681,13 @@ function AccountSettings({ onClose }: Props) {
                             : "bg-gray-50 border border-gray-200"
                       }`}>
                         {updateResult.error ? (
-                          <p className="text-sm text-red-600">Fehler: {updateResult.error}</p>
+                          <p className="text-sm text-red-600">{t("updates.error")}: {updateResult.error}</p>
                         ) : updateResult.available ? (
                           <p className="text-sm text-green-600">
-                            Neue Version {updateResult.version} verfügbar! Die App wird beim nächsten Start aktualisiert.
+                            {t("updates.available", { version: updateResult.version })}
                           </p>
                         ) : (
-                          <p className="text-sm text-gray-600">Sie verwenden die aktuellste Version.</p>
+                          <p className="text-sm text-gray-600">{t("updates.notAvailable")}</p>
                         )}
                       </div>
                     )}

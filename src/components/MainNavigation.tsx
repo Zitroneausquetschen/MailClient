@@ -1,15 +1,17 @@
+import { useTranslation } from "react-i18next";
+
 interface Tab {
   id: string;
-  label: string;
+  labelKey: string;
   icon: string;
 }
 
 const tabs: Tab[] = [
-  { id: "email", label: "E-Mail", icon: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" },
-  { id: "calendar", label: "Kalender", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
-  { id: "contacts", label: "Kontakte", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-  { id: "tasks", label: "Aufgaben", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
-  { id: "notes", label: "Notizen", icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
+  { id: "email", labelKey: "nav.email", icon: "M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" },
+  { id: "calendar", labelKey: "nav.calendar", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
+  { id: "contacts", labelKey: "nav.contacts", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+  { id: "tasks", labelKey: "nav.tasks", icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" },
+  { id: "notes", labelKey: "nav.notes", icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
 ];
 
 interface Props {
@@ -20,11 +22,13 @@ interface Props {
 }
 
 function MainNavigation({ activeTab, onTabChange, onSettingsClick, isSettingsActive }: Props) {
+  const { t } = useTranslation();
+
   return (
     <nav className="bg-gray-800 text-white">
       <div className="flex items-center justify-between px-4">
         <div className="flex items-center gap-1 py-2">
-          <span className="text-lg font-semibold mr-6">MailClient</span>
+          <span className="text-lg font-semibold mr-6">{t("app.name")}</span>
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -48,7 +52,7 @@ function MainNavigation({ activeTab, onTabChange, onSettingsClick, isSettingsAct
                   d={tab.icon}
                 />
               </svg>
-              <span>{tab.label}</span>
+              <span>{t(tab.labelKey)}</span>
             </button>
           ))}
         </div>
@@ -61,7 +65,7 @@ function MainNavigation({ activeTab, onTabChange, onSettingsClick, isSettingsAct
               ? "bg-white text-gray-800"
               : "text-gray-300 hover:bg-gray-700 hover:text-white"
           }`}
-          title="Einstellungen"
+          title={t("nav.settings")}
         >
           <svg
             className="w-5 h-5"
@@ -82,7 +86,7 @@ function MainNavigation({ activeTab, onTabChange, onSettingsClick, isSettingsAct
               d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
             />
           </svg>
-          <span>Einstellungen</span>
+          <span>{t("nav.settings")}</span>
         </button>
       </div>
     </nav>

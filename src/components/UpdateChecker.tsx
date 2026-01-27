@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
@@ -26,6 +27,7 @@ export async function checkForUpdatesManual(): Promise<UpdateCheckResult> {
 }
 
 function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
+  const { t } = useTranslation();
   const [update, setUpdate] = useState<Update | null>(null);
   const [showDialog, setShowDialog] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -134,7 +136,7 @@ function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
             </div>
             <div>
               <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Update verfügbar
+                {t("updates.available")}
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
                 Version {update.version}
@@ -159,7 +161,7 @@ function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
           {downloading && (
             <div className="mb-4">
               <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400 mb-1">
-                <span>Herunterladen...</span>
+                <span>{t("updates.downloading")}</span>
                 <span>
                   {totalSize > 0
                     ? `${formatBytes(downloadedSize)} / ${formatBytes(totalSize)}`
@@ -178,7 +180,7 @@ function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
           {installing && (
             <div className="mb-4 text-center">
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Installation wird vorbereitet...
+                {t("updates.installing")}
               </p>
             </div>
           )}
@@ -191,13 +193,13 @@ function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
                 onClick={handleClose}
                 className="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-lg transition-colors"
               >
-                Später
+                {t("updates.later")}
               </button>
               <button
                 onClick={handleDownloadAndInstall}
                 className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg transition-colors"
               >
-                Jetzt aktualisieren
+                {t("updates.updateNow")}
               </button>
             </>
           )}
@@ -206,7 +208,7 @@ function UpdateChecker({ checkOnMount = true }: UpdateCheckerProps) {
               disabled
               className="px-4 py-2 bg-gray-400 text-white rounded-lg cursor-not-allowed"
             >
-              Herunterladen...
+              {t("updates.downloading")}
             </button>
           )}
         </div>

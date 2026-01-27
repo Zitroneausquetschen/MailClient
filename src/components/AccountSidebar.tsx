@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ConnectedAccount } from "../types/mail";
 
 interface Props {
@@ -15,6 +16,7 @@ function AccountSidebar({
   onAddAccount,
   onRemoveAccount,
 }: Props) {
+  const { t } = useTranslation();
   // Get initials from display name or email
   const getInitials = (account: ConnectedAccount) => {
     if (account.displayName) {
@@ -71,7 +73,7 @@ function AccountSidebar({
               onRemoveAccount(account.id);
             }}
             className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full text-xs hidden group-hover:flex items-center justify-center hover:bg-red-600"
-            title="Konto entfernen"
+            title={t("accounts.remove")}
           >
             &times;
           </button>
@@ -89,7 +91,7 @@ function AccountSidebar({
       <button
         onClick={onAddAccount}
         className="w-10 h-10 rounded-full border-2 border-dashed border-gray-500 text-gray-500 hover:border-gray-400 hover:text-gray-400 flex items-center justify-center transition-colors mt-2"
-        title="Konto hinzufügen"
+        title={t("accounts.add")}
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

@@ -1,24 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Calendar as BigCalendar, dateFnsLocalizer, View, SlotInfo } from "react-big-calendar";
 import withDragAndDrop, { EventInteractionArgs } from "react-big-calendar/lib/addons/dragAndDrop";
 import { format, parse, startOfWeek, getDay, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
-import { de } from "date-fns/locale";
+import { de, enUS } from "date-fns/locale";
 import { SavedAccount, Calendar, CalendarEvent } from "../types/mail";
 import EventDialog from "./EventDialog";
 
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "react-big-calendar/lib/addons/dragAndDrop/styles.css";
 
-const locales = { de };
-
-const localizer = dateFnsLocalizer({
-  format,
-  parse,
-  startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
-  getDay,
-  locales,
-});
+const locales = { de, en: enUS };
 
 const DnDCalendar = withDragAndDrop<BigCalendarEvent>(BigCalendar);
 
@@ -37,6 +30,7 @@ interface Props {
 }
 
 function CalendarView({ currentAccount }: Props) {
+  const { t, i18n } = useTranslation();
   const [calendars, setCalendars] = useState<Calendar[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set());
@@ -86,7 +80,7 @@ function CalendarView({ currentAccount }: Props) {
       }
     } catch (e) {
       console.error("[CalendarView] Error loading calendars:", e);
-      setError(`Fehler beim Laden der Kalender: ${e}`);
+      setError(`${t("errors.loadFailed")}: ${e}`);
     } finally {
       setLoading(false);
     }
@@ -211,10 +205,10 @@ function CalendarView({ currentAccount }: Props) {
           prev.map((e) => (e.id === updatedEvent.id ? updatedEvent : e))
         );
       } catch (e) {
-        setError(`Fehler beim Verschieben: ${e}`);
+        setError(`${t("errors.saveFailed")}: ${e}`);
       }
     },
-    [currentAccount]
+    [currentAccount, t]
   );
 
   const handleEventResize = useCallback(
@@ -245,10 +239,10 @@ function CalendarView({ currentAccount }: Props) {
           prev.map((e) => (e.id === updatedEvent.id ? updatedEvent : e))
         );
       } catch (e) {
-        setError(`Fehler beim Aendern: ${e}`);
+        setError(`${t("errors.saveFailed")}: ${e}`);
       }
     },
-    [currentAccount]
+    [currentAccount, t]
   );
 
   const handleSaveEvent = async (event: CalendarEvent) => {
@@ -364,20 +358,36 @@ function CalendarView({ currentAccount }: Props) {
     };
   };
 
-  const messages = {
-    today: "Heute",
-    previous: "Zurueck",
-    next: "Weiter",
-    month: "Monat",
-    week: "Woche",
-    day: "Tag",
-    agenda: "Agenda",
-    date: "Datum",
-    time: "Uhrzeit",
-    event: "Termin",
-    noEventsInRange: "Keine Termine in diesem Zeitraum",
-    showMore: (total: number) => `+${total} weitere`,
-  };
+  // Get the current locale for date-fns based on i18n language
+  const currentLocale = useMemo(() => {
+    return i18n.language === "en" ? enUS : de;
+  }, [i18n.language]);
+
+  // Create localizer with current locale
+  const localizer = useMemo(() => {
+    return dateFnsLocalizer({
+      format,
+      parse,
+      startOfWeek: () => startOfWeek(new Date(), { weekStartsOn: 1 }),
+      getDay,
+      locales,
+    });
+  }, []);
+
+  const messages = useMemo(() => ({
+    today: t("calendar.today"),
+    previous: t("common.back"),
+    next: t("common.next"),
+    month: t("calendar.month"),
+    week: t("calendar.week"),
+    day: t("calendar.day"),
+    agenda: t("calendar.agenda"),
+    date: t("email.date"),
+    time: i18n.language === "en" ? "Time" : "Uhrzeit",
+    event: t("calendar.newEvent").replace(t("calendar.newEvent").split(" ")[0] + " ", ""),
+    noEventsInRange: i18n.language === "en" ? "No events in this range" : "Keine Termine in diesem Zeitraum",
+    showMore: (total: number) => i18n.language === "en" ? `+${total} more` : `+${total} weitere`,
+  }), [t, i18n.language]);
 
   return (
     <div className="h-full flex">
@@ -395,26 +405,26 @@ function CalendarView({ currentAccount }: Props) {
               ? "bg-gray-300 text-gray-500 cursor-not-allowed"
               : "bg-blue-600 text-white hover:bg-blue-700"
           }`}
-          title={calendars.length === 0 ? "Keine Kalender verfuegbar" : "Neuen Termin erstellen"}
+          title={calendars.length === 0 ? (i18n.language === "en" ? "No calendars available" : "Keine Kalender verfuegbar") : t("calendar.newEvent")}
         >
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
-          Neuer Termin
+          {t("calendar.newEvent")}
         </button>
 
         <div className="mb-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Kalender</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">{t("calendar.title")}</h3>
           {loading && calendars.length === 0 ? (
-            <p className="text-sm text-gray-500">Laden...</p>
+            <p className="text-sm text-gray-500">{t("common.loading")}</p>
           ) : calendars.length === 0 ? (
             <div className="text-sm text-gray-500">
-              <p>Keine Kalender gefunden.</p>
+              <p>{i18n.language === "en" ? "No calendars found." : "Keine Kalender gefunden."}</p>
               <button
                 onClick={loadCalendars}
                 className="text-blue-600 hover:text-blue-800 mt-1"
               >
-                Erneut versuchen
+                {t("errors.tryAgain")}
               </button>
             </div>
           ) : (
@@ -450,7 +460,7 @@ function CalendarView({ currentAccount }: Props) {
           <svg className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          Aktualisieren
+          {t("common.refresh")}
         </button>
       </div>
 
@@ -483,7 +493,7 @@ function CalendarView({ currentAccount }: Props) {
             onEventResize={handleEventResize}
             eventPropGetter={eventStyleGetter}
             messages={messages}
-            culture="de"
+            culture={i18n.language === "en" ? "en" : "de"}
             style={{ height: "100%" }}
             views={["month", "week", "day", "agenda"]}
             step={30}
@@ -495,9 +505,9 @@ function CalendarView({ currentAccount }: Props) {
               timeGutterFormat: "HH:mm",
               eventTimeRangeFormat: ({ start, end }) =>
                 `${format(start, "HH:mm")} - ${format(end, "HH:mm")}`,
-              dayHeaderFormat: (date) => format(date, "EEEE, d. MMMM", { locale: de }),
+              dayHeaderFormat: (date) => format(date, "EEEE, d. MMMM", { locale: currentLocale }),
               dayRangeHeaderFormat: ({ start, end }) =>
-                `${format(start, "d. MMM", { locale: de })} - ${format(end, "d. MMM yyyy", { locale: de })}`,
+                `${format(start, "d. MMM", { locale: currentLocale })} - ${format(end, "d. MMM yyyy", { locale: currentLocale })}`,
             }}
           />
         </div>

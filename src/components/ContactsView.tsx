@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
 import { Contact, ContactEmail, ContactPhone, SavedAccount } from "../types/mail";
 
@@ -8,6 +9,7 @@ interface Props {
 }
 
 function ContactsView({ currentAccount, onClose }: Props) {
+  const { t } = useTranslation();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +52,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
       });
       setContacts(result);
     } catch (e) {
-      setError(`Fehler beim Laden der Kontakte: ${e}`);
+      setError(`${t("errors.loadFailed")}: ${e}`);
     } finally {
       setLoading(false);
     }
@@ -107,7 +109,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
     // Validate
     const validEmails = formData.emails.filter(e => e.email.trim() !== "");
     if (validEmails.length === 0) {
-      setError("Bitte gib mindestens eine E-Mail-Adresse ein.");
+      setError(t("contacts.emailRequired"));
       return;
     }
 
@@ -148,7 +150,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
       setIsEditing(false);
       setIsCreating(false);
     } catch (e) {
-      setError(`Fehler beim Speichern: ${e}`);
+      setError(`${t("errors.saveFailed")}: ${e}`);
     } finally {
       setSaving(false);
     }
@@ -157,7 +159,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
   const handleDelete = async () => {
     if (!currentAccount || !selectedContact) return;
 
-    if (!confirm(`Kontakt "${selectedContact.displayName}" wirklich löschen?`)) {
+    if (!confirm(t("contacts.confirmDelete"))) {
       return;
     }
 
@@ -174,7 +176,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
       await loadContacts();
       setSelectedContact(null);
     } catch (e) {
-      setError(`Fehler beim Löschen: ${e}`);
+      setError(`${t("errors.deleteFailed")}: ${e}`);
     } finally {
       setSaving(false);
     }
@@ -226,7 +228,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
         <div className="flex items-center gap-2 mb-3">
           <input
             type="text"
-            placeholder="Kontakte durchsuchen..."
+            placeholder={t("contacts.search")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -236,15 +238,15 @@ function ContactsView({ currentAccount, onClose }: Props) {
           onClick={handleNewContact}
           className="w-full px-4 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700"
         >
-          + Neuer Kontakt
+          + {t("contacts.add")}
         </button>
       </div>
       <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="p-4 text-center text-gray-500">Lade Kontakte...</div>
+          <div className="p-4 text-center text-gray-500">{t("common.loading")}</div>
         ) : filteredContacts.length === 0 ? (
           <div className="p-4 text-center text-gray-500">
-            {searchQuery ? "Keine Kontakte gefunden" : "Keine Kontakte vorhanden"}
+            {searchQuery ? t("search.noResults") : t("contacts.noContacts")}
           </div>
         ) : (
           filteredContacts.map((contact) => (
@@ -277,7 +279,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
     if (!selectedContact) {
       return (
         <div className="flex-1 flex items-center justify-center text-gray-400">
-          Wähle einen Kontakt aus oder erstelle einen neuen
+          {t("contacts.selectOrCreate")}
         </div>
       );
     }
@@ -298,14 +300,14 @@ function ContactsView({ currentAccount, onClose }: Props) {
               onClick={handleEditContact}
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
             >
-              Bearbeiten
+              {t("common.edit")}
             </button>
             <button
               onClick={handleDelete}
               disabled={saving}
               className="px-4 py-2 bg-red-100 text-red-700 rounded hover:bg-red-200 disabled:opacity-50"
             >
-              Löschen
+              {t("common.delete")}
             </button>
           </div>
         </div>
@@ -313,7 +315,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
         <div className="space-y-6">
           {selectedContact.emails.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">E-Mail</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">{t("contacts.email")}</h3>
               {selectedContact.emails.map((email, i) => (
                 <div key={i} className="flex items-center gap-2 mb-1">
                   <a
@@ -332,7 +334,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
 
           {selectedContact.phones.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Telefon</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">{t("contacts.phone")}</h3>
               {selectedContact.phones.map((phone, i) => (
                 <div key={i} className="flex items-center gap-2 mb-1">
                   <span className="text-gray-800">{phone.number}</span>
@@ -351,14 +353,14 @@ function ContactsView({ currentAccount, onClose }: Props) {
   const renderContactForm = () => (
     <div className="flex-1 p-6 overflow-y-auto">
       <h2 className="text-xl font-semibold text-gray-800 mb-6">
-        {isCreating ? "Neuer Kontakt" : "Kontakt bearbeiten"}
+        {isCreating ? t("contacts.add") : t("contacts.edit")}
       </h2>
 
       <div className="space-y-4 max-w-lg">
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">
-              Vorname
+              {t("contacts.firstName")}
             </label>
             <input
               type="text"
@@ -369,7 +371,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">
-              Nachname
+              {t("contacts.lastName")}
             </label>
             <input
               type="text"
@@ -382,7 +384,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
 
         <div>
           <label className="block text-sm font-medium text-gray-600 mb-1">
-            Organisation
+            {t("contacts.company")}
           </label>
           <input
             type="text"
@@ -394,7 +396,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
 
         <div>
           <label className="block text-sm font-medium text-gray-600 mb-1">
-            E-Mail-Adressen
+            {t("contacts.email")}
           </label>
           {formData.emails.map((email, index) => (
             <div key={index} className="flex gap-2 mb-2">
@@ -410,9 +412,9 @@ function ContactsView({ currentAccount, onClose }: Props) {
                 onChange={(e) => updateEmail(index, "label", e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="work">Arbeit</option>
-                <option value="home">Privat</option>
-                <option value="other">Andere</option>
+                <option value="work">{t("contacts.work")}</option>
+                <option value="home">{t("contacts.home")}</option>
+                <option value="other">{t("contacts.other")}</option>
               </select>
               {formData.emails.length > 1 && (
                 <button
@@ -430,13 +432,13 @@ function ContactsView({ currentAccount, onClose }: Props) {
             onClick={addEmail}
             className="text-sm text-blue-600 hover:underline"
           >
-            + Weitere E-Mail hinzufügen
+            + {t("contacts.addEmail")}
           </button>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-600 mb-1">
-            Telefonnummern
+            {t("contacts.phone")}
           </label>
           {formData.phones.map((phone, index) => (
             <div key={index} className="flex gap-2 mb-2">
@@ -452,10 +454,10 @@ function ContactsView({ currentAccount, onClose }: Props) {
                 onChange={(e) => updatePhone(index, "label", e.target.value)}
                 className="px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                <option value="work">Arbeit</option>
-                <option value="home">Privat</option>
-                <option value="mobile">Mobil</option>
-                <option value="other">Andere</option>
+                <option value="work">{t("contacts.work")}</option>
+                <option value="home">{t("contacts.home")}</option>
+                <option value="mobile">{t("contacts.mobile")}</option>
+                <option value="other">{t("contacts.other")}</option>
               </select>
               <button
                 type="button"
@@ -471,7 +473,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
             onClick={addPhone}
             className="text-sm text-blue-600 hover:underline"
           >
-            + Telefonnummer hinzufügen
+            + {t("contacts.addPhone")}
           </button>
         </div>
 
@@ -481,7 +483,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
             disabled={saving}
             className="px-6 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 disabled:bg-blue-400"
           >
-            {saving ? "Speichern..." : "Speichern"}
+            {saving ? t("contacts.saving") : t("common.save")}
           </button>
           <button
             onClick={() => {
@@ -490,7 +492,7 @@ function ContactsView({ currentAccount, onClose }: Props) {
             }}
             className="px-6 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
           >
-            Abbrechen
+            {t("common.cancel")}
           </button>
         </div>
       </div>
@@ -500,16 +502,16 @@ function ContactsView({ currentAccount, onClose }: Props) {
   return (
     <div className="h-full flex flex-col">
       <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
-        <h1 className="text-xl font-semibold text-gray-800">Kontakte</h1>
+        <h1 className="text-xl font-semibold text-gray-800">{t("contacts.title")}</h1>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-500">
-            {contacts.length} Kontakte
+            {contacts.length} {t("contacts.title")}
           </span>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700"
           >
-            Schließen
+            {t("common.close")}
           </button>
         </div>
       </div>
