@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Email, Folder } from "../types/mail";
+import { Email, Folder, Attachment } from "../types/mail";
 
 interface Props {
   email: Email;
@@ -7,6 +7,7 @@ interface Props {
   onReply: (email: Email) => void;
   onDelete: () => void;
   onMove: (folder: string) => void;
+  onDownloadAttachment?: (attachment: Attachment) => Promise<void>;
 }
 
 function formatDate(dateStr: string): string {
@@ -25,8 +26,19 @@ function formatDate(dateStr: string): string {
   }
 }
 
-function EmailView({ email, folders, onReply, onDelete, onMove }: Props) {
+function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttachment }: Props) {
   const [showMoveMenu, setShowMoveMenu] = useState(false);
+  const [downloadingAttachment, setDownloadingAttachment] = useState<string | null>(null);
+
+  const handleDownload = async (attachment: Attachment) => {
+    if (!onDownloadAttachment) return;
+    setDownloadingAttachment(attachment.partId);
+    try {
+      await onDownloadAttachment(attachment);
+    } finally {
+      setDownloadingAttachment(null);
+    }
+  };
 
   return (
     <div className="h-full flex flex-col">
@@ -105,16 +117,24 @@ function EmailView({ email, folders, onReply, onDelete, onMove }: Props) {
             </h4>
             <div className="flex flex-wrap gap-2">
               {email.attachments.map((attachment, i) => (
-                <div
+                <button
                   key={i}
-                  className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded text-sm"
+                  onClick={() => handleDownload(attachment)}
+                  disabled={downloadingAttachment === attachment.partId}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded text-sm hover:bg-gray-200 transition-colors cursor-pointer disabled:opacity-50"
+                  title="Klicken zum Herunterladen"
                 >
-                  <span>📎</span>
+                  {downloadingAttachment === attachment.partId ? (
+                    <span className="animate-spin">⏳</span>
+                  ) : (
+                    <span>📎</span>
+                  )}
                   <span>{attachment.filename}</span>
                   <span className="text-gray-500 text-xs">
                     ({formatSize(attachment.size)})
                   </span>
-                </div>
+                  <span className="text-blue-600 text-xs">⬇</span>
+                </button>
               ))}
             </div>
           </div>

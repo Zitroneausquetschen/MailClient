@@ -179,6 +179,201 @@ async fn move_email(
     client.move_email(&folder, uid, &target_folder).await
 }
 
+// Flag operations
+#[tauri::command]
+async fn mark_flagged(state: State<'_, AppState>, account_id: String, folder: String, uid: u32) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.mark_flagged(&folder, uid).await
+}
+
+#[tauri::command]
+async fn unmark_flagged(state: State<'_, AppState>, account_id: String, folder: String, uid: u32) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.unmark_flagged(&folder, uid).await
+}
+
+#[tauri::command]
+async fn mark_unread(state: State<'_, AppState>, account_id: String, folder: String, uid: u32) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.mark_unread(&folder, uid).await
+}
+
+#[tauri::command]
+async fn add_flags(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uid: u32,
+    flags: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    let flag_refs: Vec<&str> = flags.iter().map(|s| s.as_str()).collect();
+    client.add_flags(&folder, uid, &flag_refs).await
+}
+
+#[tauri::command]
+async fn remove_flags(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uid: u32,
+    flags: Vec<String>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    let flag_refs: Vec<&str> = flags.iter().map(|s| s.as_str()).collect();
+    client.remove_flags(&folder, uid, &flag_refs).await
+}
+
+// Folder operations
+#[tauri::command]
+async fn create_folder(state: State<'_, AppState>, account_id: String, folder_name: String) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.create_folder(&folder_name).await
+}
+
+#[tauri::command]
+async fn delete_folder(state: State<'_, AppState>, account_id: String, folder_name: String) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.delete_folder(&folder_name).await
+}
+
+#[tauri::command]
+async fn rename_folder(
+    state: State<'_, AppState>,
+    account_id: String,
+    old_name: String,
+    new_name: String,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.rename_folder(&old_name, &new_name).await
+}
+
+// Attachment operations
+#[tauri::command]
+async fn download_attachment(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uid: u32,
+    part_id: String,
+    filename: String,
+) -> Result<String, String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+
+    // Get the attachment data
+    let data = client.get_attachment(&folder, uid, &part_id).await?;
+
+    // Get the downloads directory
+    let downloads_dir = dirs::download_dir()
+        .ok_or("Could not find downloads directory")?;
+
+    // Sanitize filename to prevent path traversal
+    let safe_filename = filename
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == '_' || *c == ' ')
+        .collect::<String>();
+
+    let file_path = downloads_dir.join(&safe_filename);
+
+    // Handle duplicate filenames
+    let final_path = if file_path.exists() {
+        let stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+        let ext = file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        let mut counter = 1;
+        loop {
+            let new_name = if ext.is_empty() {
+                format!("{} ({})", stem, counter)
+            } else {
+                format!("{} ({}).{}", stem, counter, ext)
+            };
+            let new_path = downloads_dir.join(&new_name);
+            if !new_path.exists() {
+                break new_path;
+            }
+            counter += 1;
+        }
+    } else {
+        file_path
+    };
+
+    // Write the file
+    std::fs::write(&final_path, &data)
+        .map_err(|e| format!("Failed to write file: {}", e))?;
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
+// Bulk operations
+#[tauri::command]
+async fn bulk_mark_read(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.bulk_mark_read(&folder, &uids).await
+}
+
+#[tauri::command]
+async fn bulk_mark_unread(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.bulk_mark_unread(&folder, &uids).await
+}
+
+#[tauri::command]
+async fn bulk_mark_flagged(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.bulk_mark_flagged(&folder, &uids).await
+}
+
+#[tauri::command]
+async fn bulk_delete(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.bulk_delete(&folder, &uids).await
+}
+
+#[tauri::command]
+async fn bulk_move(
+    state: State<'_, AppState>,
+    account_id: String,
+    folder: String,
+    uids: Vec<u32>,
+    target_folder: String,
+) -> Result<(), String> {
+    let clients = state.imap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("Account not connected")?;
+    client.bulk_move(&folder, &uids, &target_folder).await
+}
+
 #[tauri::command]
 async fn send_email(state: State<'_, AppState>, account_id: String, email: OutgoingEmail) -> Result<(), String> {
     log_to_file(&format!("send_email called for account: {}", account_id));
@@ -555,6 +750,24 @@ pub fn run() {
             mark_read,
             delete_email,
             move_email,
+            // Flag operations
+            mark_flagged,
+            unmark_flagged,
+            mark_unread,
+            add_flags,
+            remove_flags,
+            // Folder operations
+            create_folder,
+            delete_folder,
+            rename_folder,
+            // Attachment operations
+            download_attachment,
+            // Bulk operations
+            bulk_mark_read,
+            bulk_mark_unread,
+            bulk_mark_flagged,
+            bulk_delete,
+            bulk_move,
             send_email,
             lookup_autoconfig,
             get_saved_accounts,

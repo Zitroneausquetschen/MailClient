@@ -1,10 +1,19 @@
+use base64::Engine;
 use lettre::{
-    message::{header::ContentType, Mailbox, MultiPart, SinglePart},
+    message::{header::ContentType, Mailbox, MultiPart, SinglePart, Attachment, Body},
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutgoingAttachment {
+    pub filename: String,
+    pub mime_type: String,
+    pub data: String,  // Base64 encoded
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +25,7 @@ pub struct OutgoingEmail {
     pub body_text: String,
     pub body_html: Option<String>,
     pub reply_to_message_id: Option<String>,
+    pub attachments: Option<Vec<OutgoingAttachment>>,
 }
 
 pub struct SmtpClient {
@@ -85,8 +95,60 @@ impl SmtpClient {
         }
 
         // Build the body
-        let message = if let Some(ref html) = email.body_html {
-            // Multipart message with text and HTML
+        let has_attachments = email.attachments.as_ref().map(|a| !a.is_empty()).unwrap_or(false);
+
+        let message = if has_attachments {
+            // Build the text/html alternative part
+            let body_part = if let Some(ref html) = email.body_html {
+                MultiPart::alternative()
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(email.body_text.clone()),
+                    )
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_HTML)
+                            .body(html.clone()),
+                    )
+            } else {
+                MultiPart::alternative()
+                    .singlepart(
+                        SinglePart::builder()
+                            .header(ContentType::TEXT_PLAIN)
+                            .body(email.body_text.clone()),
+                    )
+            };
+
+            // Start with mixed multipart (body + attachments)
+            let mut mixed = MultiPart::mixed().multipart(body_part);
+
+            // Add attachments
+            if let Some(ref attachments) = email.attachments {
+                for att in attachments {
+                    // Decode base64 data
+                    let data = base64::Engine::decode(
+                        &base64::engine::general_purpose::STANDARD,
+                        &att.data
+                    ).map_err(|e| format!("Failed to decode attachment data: {}", e))?;
+
+                    // Parse content type
+                    let content_type: ContentType = att.mime_type.parse()
+                        .unwrap_or(ContentType::parse("application/octet-stream").unwrap());
+
+                    // Create attachment
+                    let attachment = Attachment::new(att.filename.clone())
+                        .body(Body::new(data), content_type);
+
+                    mixed = mixed.singlepart(attachment);
+                }
+            }
+
+            message_builder
+                .multipart(mixed)
+                .map_err(|e| format!("Failed to build message: {}", e))?
+        } else if let Some(ref html) = email.body_html {
+            // Multipart message with text and HTML (no attachments)
             message_builder
                 .multipart(
                     MultiPart::alternative()

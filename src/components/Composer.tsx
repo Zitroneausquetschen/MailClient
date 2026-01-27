@@ -1,7 +1,34 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Email, OutgoingEmail, Contact, SavedAccount } from "../types/mail";
+import { Email, OutgoingEmail, OutgoingAttachment, Contact, SavedAccount } from "../types/mail";
 import RichTextEditor from "./RichTextEditor";
+
+interface AttachmentFile {
+  file: File;
+  name: string;
+  size: number;
+  type: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // Remove data URL prefix (e.g., "data:image/png;base64,")
+      const base64 = result.split(",")[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 interface Props {
   replyTo: Email | null;
@@ -152,6 +179,9 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
   const [signatureApplied, setSignatureApplied] = useState(false);
+  const [attachments, setAttachments] = useState<AttachmentFile[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Get signatures from current account
   const signatures = currentAccount?.signatures || [];
@@ -248,6 +278,45 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
     setBodyText(text);
   };
 
+  // Attachment handling
+  const handleFileSelect = useCallback((files: FileList | null) => {
+    if (!files) return;
+    const newAttachments: AttachmentFile[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      newAttachments.push({
+        file,
+        name: file.name,
+        size: file.size,
+        type: file.type || "application/octet-stream",
+      });
+    }
+    setAttachments((prev) => [...prev, ...newAttachments]);
+  }, []);
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    handleFileSelect(e.dataTransfer.files);
+  }, [handleFileSelect]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -274,6 +343,17 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
     }
 
     try {
+      // Convert attachments to base64
+      const outgoingAttachments: OutgoingAttachment[] = [];
+      for (const att of attachments) {
+        const base64Data = await fileToBase64(att.file);
+        outgoingAttachments.push({
+          filename: att.name,
+          mimeType: att.type,
+          data: base64Data,
+        });
+      }
+
       await onSend({
         to: toList,
         cc: ccList,
@@ -282,6 +362,7 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
         bodyText: bodyText,
         bodyHtml: bodyHtml,
         replyToMessageId: replyTo?.uid?.toString(),
+        attachments: outgoingAttachments.length > 0 ? outgoingAttachments : undefined,
       });
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e);
@@ -372,7 +453,12 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
           )}
         </div>
 
-        <div className="flex-1 min-h-0">
+        <div
+          className={`flex-1 min-h-0 ${isDragging ? "ring-2 ring-blue-500 ring-opacity-50" : ""}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <RichTextEditor
             content={bodyHtml}
             onChange={handleEditorChange}
@@ -380,6 +466,66 @@ function Composer({ replyTo, onSend, onCancel, loading, currentAccount }: Props)
             className="h-full"
             minHeight="250px"
           />
+        </div>
+
+        {/* Attachments section */}
+        <div className="mt-4 border-t pt-4">
+          <div className="flex items-center gap-4 mb-2">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={(e) => handleFileSelect(e.target.files)}
+              multiple
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-2"
+            >
+              <span>📎</span>
+              Anhang hinzufuegen
+            </button>
+            {attachments.length > 0 && (
+              <span className="text-sm text-gray-500">
+                {attachments.length} Anhang{attachments.length !== 1 ? "e" : ""} ({formatFileSize(attachments.reduce((sum, a) => sum + a.size, 0))})
+              </span>
+            )}
+          </div>
+
+          {/* Attachment list */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {attachments.map((att, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded text-sm"
+                >
+                  <span>📎</span>
+                  <span className="max-w-48 truncate" title={att.name}>
+                    {att.name}
+                  </span>
+                  <span className="text-gray-500 text-xs">
+                    ({formatFileSize(att.size)})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveAttachment(i)}
+                    className="text-red-500 hover:text-red-700 ml-1"
+                    title="Entfernen"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isDragging && (
+            <div className="mt-2 p-4 border-2 border-dashed border-blue-400 rounded bg-blue-50 text-center text-blue-600">
+              Dateien hier ablegen
+            </div>
+          )}
         </div>
 
         <div className="mt-4 flex justify-end">

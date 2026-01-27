@@ -14,7 +14,7 @@ import NotesView from "./components/NotesView";
 import AccountSettings from "./components/AccountSettings";
 import MainNavigation from "./components/MainNavigation";
 import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
-import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule } from "./types/mail";
+import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
@@ -74,6 +74,10 @@ function App() {
 
   // Composer window preference
   const [openComposerInNewWindow, setOpenComposerInNewWindow] = useState(false);
+
+  // Multi-select state
+  const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
 
   // Helper to set error and play sound
   const showError = (message: string) => {
@@ -595,6 +599,180 @@ function App() {
     }
   };
 
+  // Flag operations
+  const handleToggleFlag = async (uid: number, currentlyFlagged: boolean) => {
+    if (!activeAccountId) return;
+    try {
+      if (currentlyFlagged) {
+        await invoke("unmark_flagged", { accountId: activeAccountId, folder: selectedFolder, uid });
+      } else {
+        await invoke("mark_flagged", { accountId: activeAccountId, folder: selectedFolder, uid });
+      }
+      // Update local state
+      setEmails((prev) =>
+        prev.map((e) => (e.uid === uid ? { ...e, isFlagged: !currentlyFlagged } : e))
+      );
+      if (selectedEmail?.uid === uid) {
+        setSelectedEmail((prev) => prev ? { ...prev, isFlagged: !currentlyFlagged } : null);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleMarkUnread = async (uid: number) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("mark_unread", { accountId: activeAccountId, folder: selectedFolder, uid });
+      setEmails((prev) =>
+        prev.map((e) => (e.uid === uid ? { ...e, isRead: false } : e))
+      );
+      if (selectedEmail?.uid === uid) {
+        setSelectedEmail(null);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // Bulk operations
+  const handleBulkMarkRead = async () => {
+    if (!activeAccountId || selectedUids.size === 0) return;
+    try {
+      const uids = Array.from(selectedUids);
+      await invoke("bulk_mark_read", { accountId: activeAccountId, folder: selectedFolder, uids });
+      setEmails((prev) =>
+        prev.map((e) => (selectedUids.has(e.uid) ? { ...e, isRead: true } : e))
+      );
+      setSelectedUids(new Set());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleBulkMarkUnread = async () => {
+    if (!activeAccountId || selectedUids.size === 0) return;
+    try {
+      const uids = Array.from(selectedUids);
+      await invoke("bulk_mark_unread", { accountId: activeAccountId, folder: selectedFolder, uids });
+      setEmails((prev) =>
+        prev.map((e) => (selectedUids.has(e.uid) ? { ...e, isRead: false } : e))
+      );
+      setSelectedUids(new Set());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleBulkMarkFlagged = async () => {
+    if (!activeAccountId || selectedUids.size === 0) return;
+    try {
+      const uids = Array.from(selectedUids);
+      await invoke("bulk_mark_flagged", { accountId: activeAccountId, folder: selectedFolder, uids });
+      setEmails((prev) =>
+        prev.map((e) => (selectedUids.has(e.uid) ? { ...e, isFlagged: true } : e))
+      );
+      setSelectedUids(new Set());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!activeAccountId || selectedUids.size === 0) return;
+    try {
+      const uids = Array.from(selectedUids);
+      await invoke("bulk_delete", { accountId: activeAccountId, folder: selectedFolder, uids });
+      setEmails((prev) => prev.filter((e) => !selectedUids.has(e.uid)));
+      if (selectedEmail && selectedUids.has(selectedEmail.uid)) {
+        setSelectedEmail(null);
+      }
+      setSelectedUids(new Set());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleBulkMove = async (targetFolder: string) => {
+    if (!activeAccountId || selectedUids.size === 0) return;
+    try {
+      const uids = Array.from(selectedUids);
+      await invoke("bulk_move", { accountId: activeAccountId, folder: selectedFolder, uids, targetFolder });
+      setEmails((prev) => prev.filter((e) => !selectedUids.has(e.uid)));
+      if (selectedEmail && selectedUids.has(selectedEmail.uid)) {
+        setSelectedEmail(null);
+      }
+      setSelectedUids(new Set());
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedUids(new Set());
+    setMultiSelectMode(false);
+  };
+
+  const handleSelectAll = () => {
+    setSelectedUids(new Set(emails.map((e) => e.uid)));
+  };
+
+  // Folder management
+  const handleCreateFolder = async (name: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("create_folder", { accountId: activeAccountId, folderName: name });
+      await loadFolders(activeAccountId);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleRenameFolder = async (oldName: string, newName: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("rename_folder", { accountId: activeAccountId, oldName, newName });
+      await loadFolders(activeAccountId);
+      if (selectedFolder === oldName) {
+        setSelectedFolder(newName);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleDeleteFolder = async (folderName: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("delete_folder", { accountId: activeAccountId, folderName });
+      await loadFolders(activeAccountId);
+      if (selectedFolder === folderName) {
+        setSelectedFolder("INBOX");
+        loadEmails(activeAccountId, "INBOX");
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // Attachment download
+  const handleDownloadAttachment = async (attachment: Attachment) => {
+    if (!activeAccountId || !selectedEmail) return;
+    try {
+      const savedPath = await invoke<string>("download_attachment", {
+        accountId: activeAccountId,
+        folder: selectedFolder,
+        uid: selectedEmail.uid,
+        partId: attachment.partId,
+        filename: attachment.filename,
+      });
+      // Show success notification (could be improved with a toast)
+      console.log("Attachment saved to:", savedPath);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
   const handleSendEmail = async (email: OutgoingEmail) => {
     if (!activeAccountId) return;
     console.log("[Frontend] handleSendEmail called", email);
@@ -686,6 +864,17 @@ function App() {
           });
           handleReply(fullEmail);
         },
+      },
+      { label: "", onClick: () => {}, separator: true },
+      {
+        label: email.isFlagged ? "Markierung entfernen" : "Markieren",
+        icon: email.isFlagged ? "☆" : "★",
+        onClick: () => handleToggleFlag(email.uid, email.isFlagged),
+      },
+      {
+        label: email.isRead ? "Als ungelesen markieren" : "Als gelesen markieren",
+        icon: email.isRead ? "●" : "○",
+        onClick: () => email.isRead ? handleMarkUnread(email.uid) : handleSelectEmail(email.uid),
       },
       { label: "", onClick: () => {}, separator: true },
       {
@@ -956,6 +1145,9 @@ function App() {
                       folders={folders}
                       selectedFolder={selectedFolder}
                       onSelectFolder={handleSelectFolder}
+                      onCreateFolder={handleCreateFolder}
+                      onRenameFolder={handleRenameFolder}
+                      onDeleteFolder={handleDeleteFolder}
                     />
                   </div>
 
@@ -974,13 +1166,85 @@ function App() {
                         </button>
                       </div>
                     )}
+                    {/* Bulk Action Toolbar */}
+                    {selectedUids.size > 0 && (
+                      <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center gap-2">
+                        <span className="text-sm text-blue-800 font-medium">
+                          {selectedUids.size} ausgewaehlt
+                        </span>
+                        <div className="flex-1 flex items-center gap-1">
+                          <button
+                            onClick={handleBulkMarkRead}
+                            className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
+                            title="Als gelesen markieren"
+                          >
+                            Gelesen
+                          </button>
+                          <button
+                            onClick={handleBulkMarkUnread}
+                            className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
+                            title="Als ungelesen markieren"
+                          >
+                            Ungelesen
+                          </button>
+                          <button
+                            onClick={handleBulkMarkFlagged}
+                            className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
+                            title="Markieren"
+                          >
+                            ★ Markieren
+                          </button>
+                          <div className="relative group">
+                            <button
+                              className="px-2 py-1 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50"
+                            >
+                              Verschieben ▾
+                            </button>
+                            <div className="absolute left-0 top-full mt-1 bg-white border border-gray-300 rounded shadow-lg z-10 hidden group-hover:block min-w-32">
+                              {folders.filter(f => f.name !== selectedFolder).map((folder) => (
+                                <button
+                                  key={folder.name}
+                                  onClick={() => handleBulkMove(folder.name)}
+                                  className="block w-full px-3 py-1.5 text-left text-sm hover:bg-gray-100"
+                                >
+                                  {folder.name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <button
+                            onClick={handleBulkDelete}
+                            className="px-2 py-1 text-xs bg-red-50 border border-red-300 text-red-600 rounded hover:bg-red-100"
+                            title="Loeschen"
+                          >
+                            Loeschen
+                          </button>
+                        </div>
+                        <button
+                          onClick={handleSelectAll}
+                          className="px-2 py-1 text-xs text-blue-600 hover:underline"
+                        >
+                          Alle
+                        </button>
+                        <button
+                          onClick={handleClearSelection}
+                          className="px-2 py-1 text-xs text-gray-600 hover:underline"
+                        >
+                          Abbrechen
+                        </button>
+                      </div>
+                    )}
                     <div className="flex-1 overflow-y-auto">
                       <EmailList
                         emails={searchResults !== null ? searchResults : emails}
                         selectedUid={selectedEmail?.uid}
                         onSelectEmail={handleSelectEmail}
                         onContextMenu={(email, x, y) => setContextMenu({ email, x, y })}
+                        onToggleFlag={handleToggleFlag}
                         loading={loading || searching}
+                        selectedUids={selectedUids}
+                        onSelectionChange={setSelectedUids}
+                        multiSelectMode={multiSelectMode}
                       />
                     </div>
                   </div>
@@ -994,6 +1258,7 @@ function App() {
                         onReply={handleReply}
                         onDelete={() => handleDeleteEmail(selectedEmail.uid)}
                         onMove={(folder) => handleMoveEmail(selectedEmail.uid, folder)}
+                        onDownloadAttachment={handleDownloadAttachment}
                       />
                     ) : (
                       <div className="h-full flex items-center justify-center text-gray-400">

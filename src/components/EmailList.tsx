@@ -5,7 +5,12 @@ interface Props {
   selectedUid?: number;
   onSelectEmail: (uid: number) => void;
   onContextMenu?: (email: EmailHeader, x: number, y: number) => void;
+  onToggleFlag?: (uid: number, currentlyFlagged: boolean) => void;
   loading: boolean;
+  // Multi-select props
+  selectedUids?: Set<number>;
+  onSelectionChange?: (uids: Set<number>) => void;
+  multiSelectMode?: boolean;
 }
 
 function formatDate(dateStr: string): string {
@@ -57,7 +62,17 @@ function extractName(from: string): string {
   return from;
 }
 
-function EmailList({ emails, selectedUid, onSelectEmail, onContextMenu, loading }: Props) {
+function EmailList({
+  emails,
+  selectedUid,
+  onSelectEmail,
+  onContextMenu,
+  onToggleFlag,
+  loading,
+  selectedUids,
+  onSelectionChange,
+  multiSelectMode = false,
+}: Props) {
   if (loading && emails.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-gray-400">
@@ -81,28 +96,112 @@ function EmailList({ emails, selectedUid, onSelectEmail, onContextMenu, loading 
     }
   };
 
+  const handleClick = (e: React.MouseEvent, email: EmailHeader) => {
+    if (multiSelectMode && onSelectionChange && selectedUids) {
+      // In multi-select mode, toggle selection
+      const newSelection = new Set(selectedUids);
+      if (newSelection.has(email.uid)) {
+        newSelection.delete(email.uid);
+      } else {
+        newSelection.add(email.uid);
+      }
+      onSelectionChange(newSelection);
+    } else if (e.ctrlKey && onSelectionChange && selectedUids) {
+      // Ctrl+Click: toggle selection
+      const newSelection = new Set(selectedUids);
+      if (newSelection.has(email.uid)) {
+        newSelection.delete(email.uid);
+      } else {
+        newSelection.add(email.uid);
+      }
+      onSelectionChange(newSelection);
+    } else if (e.shiftKey && onSelectionChange && selectedUids && selectedUid) {
+      // Shift+Click: range selection
+      const startIdx = emails.findIndex((e) => e.uid === selectedUid);
+      const endIdx = emails.findIndex((e) => e.uid === email.uid);
+      if (startIdx !== -1 && endIdx !== -1) {
+        const [from, to] = startIdx < endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+        const newSelection = new Set(selectedUids);
+        for (let i = from; i <= to; i++) {
+          newSelection.add(emails[i].uid);
+        }
+        onSelectionChange(newSelection);
+      }
+    } else {
+      onSelectEmail(email.uid);
+    }
+  };
+
+  const handleCheckboxChange = (email: EmailHeader) => {
+    if (onSelectionChange && selectedUids) {
+      const newSelection = new Set(selectedUids);
+      if (newSelection.has(email.uid)) {
+        newSelection.delete(email.uid);
+      } else {
+        newSelection.add(email.uid);
+      }
+      onSelectionChange(newSelection);
+    }
+  };
+
+  const handleFlagClick = (e: React.MouseEvent, email: EmailHeader) => {
+    e.stopPropagation();
+    if (onToggleFlag) {
+      onToggleFlag(email.uid, email.isFlagged);
+    }
+  };
+
+  const isSelected = (uid: number) => selectedUids?.has(uid) || false;
+
   return (
     <div className="divide-y">
       {emails.map((email) => (
-        <button
+        <div
           key={email.uid}
-          onClick={() => onSelectEmail(email.uid)}
+          onClick={(e) => handleClick(e, email)}
           onContextMenu={(e) => handleContextMenu(e, email)}
-          className={`w-full p-3 text-left email-item ${
+          className={`w-full p-3 text-left email-item cursor-pointer ${
             selectedUid === email.uid ? "selected" : ""
-          } ${!email.isRead ? "email-unread" : ""}`}
+          } ${!email.isRead ? "email-unread" : ""} ${
+            isSelected(email.uid) ? "bg-blue-50" : ""
+          }`}
         >
           <div className="flex items-center justify-between mb-1">
-            <span className="text-sm truncate flex-1 mr-2">
-              {extractName(email.from)}
-            </span>
-            <span className="text-xs text-gray-500 whitespace-nowrap">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              {/* Checkbox for multi-select */}
+              {(multiSelectMode || (selectedUids && selectedUids.size > 0)) && (
+                <input
+                  type="checkbox"
+                  checked={isSelected(email.uid)}
+                  onChange={() => handleCheckboxChange(email)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-4 h-4 flex-shrink-0"
+                />
+              )}
+              {/* Star/Flag icon */}
+              <button
+                onClick={(e) => handleFlagClick(e, email)}
+                className={`flex-shrink-0 text-lg hover:scale-110 transition-transform ${
+                  email.isFlagged ? "text-yellow-500" : "text-gray-300 hover:text-yellow-400"
+                }`}
+                title={email.isFlagged ? "Markierung entfernen" : "Markieren"}
+              >
+                {email.isFlagged ? "★" : "☆"}
+              </button>
+              <span className="text-sm truncate">
+                {extractName(email.from)}
+              </span>
+            </div>
+            <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
               {formatDate(email.date)}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {!email.isRead && (
               <span className="w-2 h-2 bg-blue-600 rounded-full flex-shrink-0"></span>
+            )}
+            {email.isAnswered && (
+              <span className="text-gray-400 flex-shrink-0 text-xs" title="Beantwortet">↩</span>
             )}
             <span className="text-sm text-gray-700 truncate">
               {email.subject || "(Kein Betreff)"}
@@ -111,7 +210,7 @@ function EmailList({ emails, selectedUid, onSelectEmail, onContextMenu, loading 
               <span className="text-gray-400 flex-shrink-0">📎</span>
             )}
           </div>
-        </button>
+        </div>
       ))}
     </div>
   );

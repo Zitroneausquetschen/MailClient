@@ -132,6 +132,10 @@ impl EmailCache {
                 to: row.get(3)?,
                 date: row.get(4)?,
                 is_read: row.get::<_, i32>(5)? != 0,
+                is_flagged: false,
+                is_answered: false,
+                is_draft: false,
+                flags: Vec::new(),
                 has_attachments: row.get::<_, i32>(6)? != 0,
             })
         }).map_err(|e| format!("Failed to query headers: {}", e))?;
@@ -162,6 +166,11 @@ impl EmailCache {
                 body_text: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
                 body_html: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
                 attachments: Vec::new(), // Will be loaded separately
+                is_read: true,
+                is_flagged: false,
+                is_answered: false,
+                is_draft: false,
+                flags: Vec::new(),
             })
         }).optional().map_err(|e| format!("Failed to query email: {}", e))?;
 
@@ -184,6 +193,8 @@ impl EmailCache {
                 filename: row.get(0)?,
                 mime_type: row.get(1)?,
                 size: row.get(2)?,
+                part_id: String::new(),
+                encoding: "base64".to_string(),
             })
         }).map_err(|e| format!("Failed to query attachments: {}", e))?;
 
@@ -392,6 +403,10 @@ impl EmailCache {
                 to: row.get(4)?,
                 date: row.get(5)?,
                 is_read: row.get::<_, i32>(6)? != 0,
+                is_flagged: false,
+                is_answered: false,
+                is_draft: false,
+                flags: Vec::new(),
                 has_attachments: row.get::<_, i32>(7)? != 0,
             })
         }).map_err(|e| format!("Failed to execute search: {}", e))?;

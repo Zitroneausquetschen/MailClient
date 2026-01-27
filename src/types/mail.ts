@@ -22,6 +22,10 @@ export interface EmailHeader {
   to: string;
   date: string;
   isRead: boolean;
+  isFlagged: boolean;
+  isAnswered: boolean;
+  isDraft: boolean;
+  flags: string[];
   hasAttachments: boolean;
 }
 
@@ -35,12 +39,25 @@ export interface Email {
   bodyText: string;
   bodyHtml: string;
   attachments: Attachment[];
+  isRead: boolean;
+  isFlagged: boolean;
+  isAnswered: boolean;
+  isDraft: boolean;
+  flags: string[];
 }
 
 export interface Attachment {
   filename: string;
   mimeType: string;
   size: number;
+  partId: string;
+  encoding: string;
+}
+
+export interface OutgoingAttachment {
+  filename: string;
+  mimeType: string;
+  data: string;  // Base64 encoded
 }
 
 export interface OutgoingEmail {
@@ -51,6 +68,7 @@ export interface OutgoingEmail {
   bodyText: string;
   bodyHtml?: string;
   replyToMessageId?: string;
+  attachments?: OutgoingAttachment[];
 }
 
 export interface AutoConfigResult {

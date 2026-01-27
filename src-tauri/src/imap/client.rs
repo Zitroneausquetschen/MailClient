@@ -41,6 +41,10 @@ pub struct EmailHeader {
     pub to: String,
     pub date: String,
     pub is_read: bool,
+    pub is_flagged: bool,
+    pub is_answered: bool,
+    pub is_draft: bool,
+    pub flags: Vec<String>,
     pub has_attachments: bool,
 }
 
@@ -56,6 +60,11 @@ pub struct Email {
     pub body_text: String,
     pub body_html: String,
     pub attachments: Vec<Attachment>,
+    pub is_read: bool,
+    pub is_flagged: bool,
+    pub is_answered: bool,
+    pub is_draft: bool,
+    pub flags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,6 +73,8 @@ pub struct Attachment {
     pub filename: String,
     pub mime_type: String,
     pub size: usize,
+    pub part_id: String,
+    pub encoding: String,
 }
 
 pub struct ImapClient {
@@ -220,8 +231,45 @@ impl ImapClient {
         let mut headers = Vec::new();
         for msg in messages {
             let uid = msg.uid.unwrap_or(0);
-            let mut flags = msg.flags();
-            let is_read = flags.any(|f| matches!(f, async_imap::types::Flag::Seen));
+
+            // Parse all flags
+            let flags_iter = msg.flags();
+            let mut is_read = false;
+            let mut is_flagged = false;
+            let mut is_answered = false;
+            let mut is_draft = false;
+            let mut flags_list: Vec<String> = Vec::new();
+
+            for flag in flags_iter {
+                match flag {
+                    async_imap::types::Flag::Seen => {
+                        is_read = true;
+                        flags_list.push("\\Seen".to_string());
+                    }
+                    async_imap::types::Flag::Flagged => {
+                        is_flagged = true;
+                        flags_list.push("\\Flagged".to_string());
+                    }
+                    async_imap::types::Flag::Answered => {
+                        is_answered = true;
+                        flags_list.push("\\Answered".to_string());
+                    }
+                    async_imap::types::Flag::Draft => {
+                        is_draft = true;
+                        flags_list.push("\\Draft".to_string());
+                    }
+                    async_imap::types::Flag::Deleted => {
+                        flags_list.push("\\Deleted".to_string());
+                    }
+                    async_imap::types::Flag::Recent => {
+                        flags_list.push("\\Recent".to_string());
+                    }
+                    async_imap::types::Flag::Custom(ref s) => {
+                        flags_list.push(s.to_string());
+                    }
+                    _ => {}
+                }
+            }
 
             let envelope = msg.envelope();
             let (subject, from, to, date) = if let Some(env) = envelope {
@@ -266,6 +314,10 @@ impl ImapClient {
                 to,
                 date,
                 is_read,
+                is_flagged,
+                is_answered,
+                is_draft,
+                flags: flags_list,
                 has_attachments,
             });
         }
@@ -303,6 +355,45 @@ impl ImapClient {
         let msg = messages
             .first()
             .ok_or("Message not found")?;
+
+        // Parse flags
+        let flags_iter = msg.flags();
+        let mut is_read = false;
+        let mut is_flagged = false;
+        let mut is_answered = false;
+        let mut is_draft = false;
+        let mut flags_list: Vec<String> = Vec::new();
+
+        for flag in flags_iter {
+            match flag {
+                async_imap::types::Flag::Seen => {
+                    is_read = true;
+                    flags_list.push("\\Seen".to_string());
+                }
+                async_imap::types::Flag::Flagged => {
+                    is_flagged = true;
+                    flags_list.push("\\Flagged".to_string());
+                }
+                async_imap::types::Flag::Answered => {
+                    is_answered = true;
+                    flags_list.push("\\Answered".to_string());
+                }
+                async_imap::types::Flag::Draft => {
+                    is_draft = true;
+                    flags_list.push("\\Draft".to_string());
+                }
+                async_imap::types::Flag::Deleted => {
+                    flags_list.push("\\Deleted".to_string());
+                }
+                async_imap::types::Flag::Recent => {
+                    flags_list.push("\\Recent".to_string());
+                }
+                async_imap::types::Flag::Custom(ref s) => {
+                    flags_list.push(s.to_string());
+                }
+                _ => {}
+            }
+        }
 
         let body = msg.body().unwrap_or(&[]);
 
@@ -351,7 +442,62 @@ impl ImapClient {
             body_text,
             body_html: sanitize_html(&body_html),
             attachments,
+            is_read,
+            is_flagged,
+            is_answered,
+            is_draft,
+            flags: flags_list,
         })
+    }
+
+    pub async fn get_attachment(&self, folder: &str, uid: u32, part_id: &str) -> Result<Vec<u8>, String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        // Fetch the specific MIME part
+        let fetch_query = format!("BODY[{}]", part_id);
+        let messages_stream = sess
+            .uid_fetch(uid.to_string(), &fetch_query)
+            .await
+            .map_err(|e| format!("Failed to fetch attachment: {}", e))?;
+
+        // Collect the stream
+        let messages: Vec<_> = messages_stream
+            .filter_map(|result| async { result.ok() })
+            .collect()
+            .await;
+
+        let msg = messages
+            .first()
+            .ok_or("Message not found")?;
+
+        let body = msg.body().unwrap_or(&[]);
+
+        // The body is the raw MIME part data, which might be base64 encoded
+        // We need to decode it based on the Content-Transfer-Encoding
+        // For now, try to decode as base64 if it looks like base64
+        let decoded = if body.iter().all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'\r' || b == b'\n') {
+            // Looks like base64
+            let cleaned: String = body.iter()
+                .filter(|&&b| b != b'\r' && b != b'\n')
+                .map(|&b| b as char)
+                .collect();
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cleaned)
+                .unwrap_or_else(|_| body.to_vec())
+        } else {
+            body.to_vec()
+        };
+
+        Ok(decoded)
     }
 
     pub async fn mark_read(&self, folder: &str, uid: u32) -> Result<(), String> {
@@ -452,6 +598,311 @@ impl ImapClient {
 
         Err("Could not find Sent folder".to_string())
     }
+
+    // Flag operations
+
+    pub async fn mark_flagged(&self, folder: &str, uid: u32) -> Result<(), String> {
+        self.add_flags(folder, uid, &["\\Flagged"]).await
+    }
+
+    pub async fn unmark_flagged(&self, folder: &str, uid: u32) -> Result<(), String> {
+        self.remove_flags(folder, uid, &["\\Flagged"]).await
+    }
+
+    pub async fn mark_unread(&self, folder: &str, uid: u32) -> Result<(), String> {
+        self.remove_flags(folder, uid, &["\\Seen"]).await
+    }
+
+    pub async fn add_flags(&self, folder: &str, uid: u32, flags: &[&str]) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let flags_str = format!("+FLAGS ({})", flags.join(" "));
+        let _: Vec<_> = sess.uid_store(uid.to_string(), &flags_str)
+            .await
+            .map_err(|e| format!("Failed to add flags: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn remove_flags(&self, folder: &str, uid: u32, flags: &[&str]) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let flags_str = format!("-FLAGS ({})", flags.join(" "));
+        let _: Vec<_> = sess.uid_store(uid.to_string(), &flags_str)
+            .await
+            .map_err(|e| format!("Failed to remove flags: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn set_flags(&self, folder: &str, uid: u32, flags: &[&str]) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let flags_str = format!("FLAGS ({})", flags.join(" "));
+        let _: Vec<_> = sess.uid_store(uid.to_string(), &flags_str)
+            .await
+            .map_err(|e| format!("Failed to set flags: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+
+    // Folder operations
+
+    pub async fn create_folder(&self, folder_name: &str) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder_name);
+        sess.create(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to create folder: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn delete_folder(&self, folder_name: &str) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder_name);
+        sess.delete(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to delete folder: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn rename_folder(&self, old_name: &str, new_name: &str) -> Result<(), String> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_old = encode_imap_utf7(old_name);
+        let encoded_new = encode_imap_utf7(new_name);
+        sess.rename(&encoded_old, &encoded_new)
+            .await
+            .map_err(|e| format!("Failed to rename folder: {}", e))?;
+
+        Ok(())
+    }
+
+    // Bulk operations
+
+    pub async fn bulk_mark_read(&self, folder: &str, uids: &[u32]) -> Result<(), String> {
+        self.bulk_add_flags(folder, uids, &["\\Seen"]).await
+    }
+
+    pub async fn bulk_mark_unread(&self, folder: &str, uids: &[u32]) -> Result<(), String> {
+        self.bulk_remove_flags(folder, uids, &["\\Seen"]).await
+    }
+
+    pub async fn bulk_mark_flagged(&self, folder: &str, uids: &[u32]) -> Result<(), String> {
+        self.bulk_add_flags(folder, uids, &["\\Flagged"]).await
+    }
+
+    pub async fn bulk_delete(&self, folder: &str, uids: &[u32]) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let uid_str = uids_to_sequence(uids);
+        let _: Vec<_> = sess.uid_store(&uid_str, "+FLAGS (\\Deleted)")
+            .await
+            .map_err(|e| format!("Failed to mark deleted: {}", e))?
+            .collect()
+            .await;
+
+        let _: Vec<_> = sess.expunge()
+            .await
+            .map_err(|e| format!("Failed to expunge: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn bulk_move(&self, folder: &str, uids: &[u32], target_folder: &str) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        let encoded_target = encode_imap_utf7(target_folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let uid_str = uids_to_sequence(uids);
+        sess.uid_mv(&uid_str, &encoded_target)
+            .await
+            .map_err(|e| format!("Failed to move emails: {}", e))?;
+
+        Ok(())
+    }
+
+    pub async fn bulk_add_flags(&self, folder: &str, uids: &[u32], flags: &[&str]) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let uid_str = uids_to_sequence(uids);
+        let flags_str = format!("+FLAGS ({})", flags.join(" "));
+        let _: Vec<_> = sess.uid_store(&uid_str, &flags_str)
+            .await
+            .map_err(|e| format!("Failed to add flags: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+
+    pub async fn bulk_remove_flags(&self, folder: &str, uids: &[u32], flags: &[&str]) -> Result<(), String> {
+        if uids.is_empty() {
+            return Ok(());
+        }
+
+        let session = self
+            .session
+            .as_ref()
+            .ok_or("Not connected")?;
+
+        let mut sess = session.lock().await;
+
+        let encoded_folder = encode_imap_utf7(folder);
+        sess.select(&encoded_folder)
+            .await
+            .map_err(|e| format!("Failed to select folder: {}", e))?;
+
+        let uid_str = uids_to_sequence(uids);
+        let flags_str = format!("-FLAGS ({})", flags.join(" "));
+        let _: Vec<_> = sess.uid_store(&uid_str, &flags_str)
+            .await
+            .map_err(|e| format!("Failed to remove flags: {}", e))?
+            .collect()
+            .await;
+
+        Ok(())
+    }
+}
+
+// Helper function to convert UID array to IMAP sequence string (e.g., "1,2,3,5:10")
+fn uids_to_sequence(uids: &[u32]) -> String {
+    if uids.is_empty() {
+        return String::new();
+    }
+
+    let mut sorted: Vec<u32> = uids.to_vec();
+    sorted.sort_unstable();
+
+    let mut result = String::new();
+    let mut range_start = sorted[0];
+    let mut range_end = sorted[0];
+
+    for &uid in &sorted[1..] {
+        if uid == range_end + 1 {
+            range_end = uid;
+        } else {
+            if !result.is_empty() {
+                result.push(',');
+            }
+            if range_start == range_end {
+                result.push_str(&range_start.to_string());
+            } else {
+                result.push_str(&format!("{}:{}", range_start, range_end));
+            }
+            range_start = uid;
+            range_end = uid;
+        }
+    }
+
+    if !result.is_empty() {
+        result.push(',');
+    }
+    if range_start == range_end {
+        result.push_str(&range_start.to_string());
+    } else {
+        result.push_str(&format!("{}:{}", range_start, range_end));
+    }
+
+    result
 }
 
 fn decode_header_value(value: &[u8]) -> String {
@@ -634,39 +1085,71 @@ fn extract_body(mail: &mailparse::ParsedMail) -> (String, String) {
 }
 
 fn extract_attachments(mail: &mailparse::ParsedMail) -> Vec<Attachment> {
+    extract_attachments_with_path(mail, "")
+}
+
+fn extract_attachments_with_path(mail: &mailparse::ParsedMail, parent_path: &str) -> Vec<Attachment> {
     let mut attachments = Vec::new();
 
-    for part in &mail.subparts {
+    for (idx, part) in mail.subparts.iter().enumerate() {
+        // Build IMAP part path (1-indexed)
+        let part_id = if parent_path.is_empty() {
+            format!("{}", idx + 1)
+        } else {
+            format!("{}.{}", parent_path, idx + 1)
+        };
+
         let disposition = part
             .headers
             .iter()
             .find(|h| h.get_key().to_lowercase() == "content-disposition");
 
+        // Get content-transfer-encoding
+        let encoding = part
+            .headers
+            .iter()
+            .find(|h| h.get_key().to_lowercase() == "content-transfer-encoding")
+            .map(|h| h.get_value().to_lowercase())
+            .unwrap_or_else(|| "7bit".to_string());
+
         if let Some(disp) = disposition {
             let value = disp.get_value();
             if value.to_lowercase().starts_with("attachment") {
-                let filename = part
-                    .headers
-                    .iter()
-                    .find(|h| h.get_key().to_lowercase() == "content-type")
-                    .and_then(|h| {
-                        h.get_value()
-                            .split(';')
-                            .find(|p| p.trim().to_lowercase().starts_with("name="))
-                            .map(|p| p.trim()[5..].trim_matches('"').to_string())
-                    })
-                    .unwrap_or_else(|| "attachment".to_string());
+                // Try to get filename from Content-Disposition first
+                let mut filename = disp.get_value()
+                    .split(';')
+                    .find(|p| p.trim().to_lowercase().starts_with("filename="))
+                    .map(|p| {
+                        let val = p.trim()[9..].trim();
+                        val.trim_matches('"').to_string()
+                    });
+
+                // Fallback to Content-Type name parameter
+                if filename.is_none() {
+                    filename = part
+                        .headers
+                        .iter()
+                        .find(|h| h.get_key().to_lowercase() == "content-type")
+                        .and_then(|h| {
+                            h.get_value()
+                                .split(';')
+                                .find(|p| p.trim().to_lowercase().starts_with("name="))
+                                .map(|p| p.trim()[5..].trim_matches('"').to_string())
+                        });
+                }
 
                 attachments.push(Attachment {
-                    filename,
+                    filename: filename.unwrap_or_else(|| "attachment".to_string()),
                     mime_type: part.ctype.mimetype.clone(),
                     size: part.get_body_raw().map(|b| b.len()).unwrap_or(0),
+                    part_id: part_id.clone(),
+                    encoding: encoding.clone(),
                 });
             }
         }
 
         // Recurse into subparts
-        attachments.extend(extract_attachments(part));
+        attachments.extend(extract_attachments_with_path(part, &part_id));
     }
 
     attachments
