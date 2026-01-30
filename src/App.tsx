@@ -21,7 +21,11 @@ import CategoryManager from "./components/CategoryManager";
 import AIChatPanel from "./components/AIChatPanel";
 import DayAgentPanel from "./components/DayAgentPanel";
 import SpamReviewDialog from "./components/SpamReviewDialog";
+import LoginDialog from "./components/LoginDialog";
+import AccountMenu from "./components/AccountMenu";
+import PremiumUpgrade from "./components/PremiumUpgrade";
 import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount, EmailCategory, SpamCandidate } from "./types/mail";
+import { CloudUser, FREE_TIER_LIMITS } from "./types/cloud";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
@@ -114,10 +118,22 @@ function App() {
   const [scanningSpam, setScanningSpam] = useState(false);
   const [spamCount, setSpamCount] = useState(0);
 
+  // Cloud sync state
+  const [cloudUser, setCloudUser] = useState<CloudUser | null>(null);
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
+  const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+  const [_cloudLoading, setCloudLoading] = useState(true);
+
   // Helper to set error and play sound
   const showError = (message: string) => {
     setError(message);
     playErrorSound();
+  };
+
+  // Check if user can add more accounts (free tier limit)
+  const canAddAccount = (): boolean => {
+    if (cloudUser?.is_premium) return true;
+    return connectedAccounts.length < FREE_TIER_LIMITS.maxAccounts;
   };
 
   // Load categories for the active account
@@ -170,6 +186,18 @@ function App() {
   useEffect(() => {
     const autoConnect = async () => {
       try {
+        // Try to restore cloud session first
+        try {
+          const user = await invoke<CloudUser | null>("cloud_restore_session");
+          if (user) {
+            setCloudUser(user);
+          }
+        } catch (e) {
+          console.log("No cloud session to restore:", e);
+        } finally {
+          setCloudLoading(false);
+        }
+
         const newConnectedAccounts: ConnectedAccount[] = [];
         let hasSetFirstAccount = false;
 
@@ -374,6 +402,12 @@ function App() {
   }, [activeAccountId, initializing, selectedFolder]);
 
   const handleConnect = async (account: MailAccount | JmapAccount, protocol: "imap" | "jmap") => {
+    // Check account limit for free users
+    if (!canAddAccount()) {
+      setShowUpgradeDialog(true);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -1672,6 +1706,14 @@ function App() {
         onTabChange={handleMainTabChange}
         onSettingsClick={handleSettingsClick}
         isSettingsActive={showSettings}
+        accountMenu={
+          <AccountMenu
+            user={cloudUser}
+            onLoginClick={() => setShowLoginDialog(true)}
+            onLogout={() => setCloudUser(null)}
+            onUpgradeClick={() => setShowUpgradeDialog(true)}
+          />
+        }
       />
 
       {/* Content based on main tab */}
@@ -2279,6 +2321,24 @@ function App() {
         isScanning={scanningSpam}
         onClose={() => setShowSpamDialog(false)}
         onConfirm={handleConfirmSpam}
+      />
+
+      {/* Cloud Login Dialog */}
+      <LoginDialog
+        isOpen={showLoginDialog}
+        onClose={() => setShowLoginDialog(false)}
+        onLoginSuccess={(user) => setCloudUser(user)}
+      />
+
+      {/* Premium Upgrade Dialog */}
+      <PremiumUpgrade
+        isOpen={showUpgradeDialog}
+        onClose={() => setShowUpgradeDialog(false)}
+        user={cloudUser}
+        onLoginClick={() => {
+          setShowUpgradeDialog(false);
+          setShowLoginDialog(true);
+        }}
       />
 
       {/* Update Checker - checks automatically on app start */}

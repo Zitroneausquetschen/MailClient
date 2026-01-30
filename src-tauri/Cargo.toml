@@ -60,3 +60,10 @@ jmap-client = "0.3"
 async-trait = "0.1"
 # Local LLM inference via llama.cpp
 llama-cpp-2 = "0.1"
+# Cloud sync encryption
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+once_cell = "1.19"

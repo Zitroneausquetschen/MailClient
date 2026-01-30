@@ -3,6 +3,7 @@ mod autoconfig;
 mod cache;
 mod caldav;
 mod carddav;
+mod cloud;
 mod imap;
 mod jmap;
 mod sieve;
@@ -1876,6 +1877,162 @@ Gib NUR den Antworttext zurück, keine Erklärungen."#,
     provider.complete(messages).await
 }
 
+// === Cloud Sync Commands ===
+
+#[tauri::command]
+async fn cloud_register(email: String, password: String, name: String) -> Result<cloud::AuthResponse, String> {
+    cloud::auth::register(&email, &password, &name).await
+}
+
+#[tauri::command]
+async fn cloud_login(email: String, password: String) -> Result<cloud::AuthResponse, String> {
+    cloud::auth::login(&email, &password).await
+}
+
+#[tauri::command]
+async fn cloud_logout() -> Result<(), String> {
+    cloud::auth::logout().await
+}
+
+#[tauri::command]
+async fn cloud_get_user() -> Result<Option<cloud::CloudUser>, String> {
+    Ok(cloud::auth::get_current_user())
+}
+
+#[tauri::command]
+async fn cloud_refresh_user() -> Result<Option<cloud::CloudUser>, String> {
+    cloud::auth::refresh_user().await
+}
+
+#[tauri::command]
+async fn cloud_restore_session() -> Result<Option<cloud::CloudUser>, String> {
+    cloud::auth::restore_session().await
+}
+
+#[tauri::command]
+async fn cloud_is_premium() -> Result<bool, String> {
+    Ok(cloud::auth::is_premium())
+}
+
+#[tauri::command]
+async fn cloud_sync_push(encryption_password: Option<String>) -> Result<cloud::SyncResult, String> {
+    // Load local data
+    let accounts = storage::load_accounts()?;
+    let jmap_accounts = storage::load_jmap_accounts()?;
+    let ai_config = storage::load_ai_config()?;
+
+    // Combine accounts
+    let all_accounts = serde_json::json!({
+        "imap": accounts,
+        "jmap": jmap_accounts
+    });
+
+    let sync_data = cloud::SyncData {
+        accounts: Some(all_accounts),
+        ai_config: Some(serde_json::to_value(&ai_config).map_err(|e| e.to_string())?),
+        categories: None, // Categories are per-account in cache, not synced globally
+        client_timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        last_modified: None,
+    };
+
+    cloud::sync::push_data(sync_data, encryption_password.as_deref()).await
+}
+
+#[tauri::command]
+async fn cloud_sync_pull(encryption_password: Option<String>) -> Result<cloud::SyncData, String> {
+    let data = cloud::sync::pull_data(None, encryption_password.as_deref()).await?;
+
+    // Apply pulled data to local storage
+    if let Some(accounts) = &data.accounts {
+        // Extract IMAP accounts
+        if let Some(imap_accounts) = accounts.get("imap") {
+            if let Ok(accounts_vec) = serde_json::from_value::<Vec<SavedAccount>>(imap_accounts.clone()) {
+                for account in accounts_vec {
+                    let _ = storage::save_account(account);
+                }
+            }
+        }
+
+        // Extract JMAP accounts
+        if let Some(jmap_accounts) = accounts.get("jmap") {
+            if let Ok(accounts_vec) = serde_json::from_value::<Vec<storage::SavedJmapAccount>>(jmap_accounts.clone()) {
+                for account in accounts_vec {
+                    let _ = storage::save_jmap_account(account);
+                }
+            }
+        }
+    }
+
+    // Apply AI config
+    if let Some(ai_config) = &data.ai_config {
+        if let Ok(config) = serde_json::from_value::<AIConfig>(ai_config.clone()) {
+            let _ = storage::save_ai_config(&config);
+        }
+    }
+
+    Ok(data)
+}
+
+#[tauri::command]
+async fn cloud_sync_status() -> Result<cloud::SyncStatus, String> {
+    cloud::sync::get_sync_status().await
+}
+
+#[tauri::command]
+async fn cloud_get_checkout_url(plan: String) -> Result<String, String> {
+    let token = cloud::auth::get_token().ok_or("Not logged in")?;
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/subscription/create-checkout", cloud::get_api_url());
+
+    #[derive(serde::Serialize)]
+    struct CheckoutRequest {
+        plan: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CheckoutResponse {
+        checkout_url: String,
+    }
+
+    let response = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&CheckoutRequest { plan })
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let checkout: CheckoutResponse = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    Ok(checkout.checkout_url)
+}
+
+#[tauri::command]
+async fn cloud_get_subscription() -> Result<cloud::SubscriptionInfo, String> {
+    let token = cloud::auth::get_token().ok_or("Not logged in")?;
+
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/subscription/status", cloud::get_api_url());
+
+    let response = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}", e))?;
+
+    let subscription: cloud::SubscriptionInfo = response
+        .json()
+        .await
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    Ok(subscription)
+}
+
 // === Day Agent Commands ===
 
 #[tauri::command]
@@ -2055,6 +2212,19 @@ pub fn run() {
             // Day Agent commands
             get_day_briefing,
             refresh_day_state,
+            // Cloud sync commands
+            cloud_register,
+            cloud_login,
+            cloud_logout,
+            cloud_get_user,
+            cloud_refresh_user,
+            cloud_restore_session,
+            cloud_is_premium,
+            cloud_sync_push,
+            cloud_sync_pull,
+            cloud_sync_status,
+            cloud_get_checkout_url,
+            cloud_get_subscription,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
