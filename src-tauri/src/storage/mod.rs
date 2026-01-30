@@ -67,9 +67,35 @@ pub struct SavedAccount {
 fn default_cache_days() -> u32 { 30 }
 fn default_true() -> bool { true }
 
+// JMAP account storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedJmapAccount {
+    pub id: String,
+    pub display_name: String,
+    pub username: String,
+    pub jmap_url: String,
+    // Password is optional - user can choose to save it or not
+    #[serde(default)]
+    pub password: Option<String>,
+    // Protocol marker for frontend
+    pub protocol: String,  // "jmap"
+    // Signatures
+    #[serde(default)]
+    pub signatures: Vec<EmailSignature>,
+    // Vacation settings
+    #[serde(default)]
+    pub vacation: Option<VacationSettings>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     pub accounts: Vec<SavedAccount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct JmapAppConfig {
+    pub accounts: Vec<SavedJmapAccount>,
 }
 
 fn get_config_path() -> Result<PathBuf, String> {
@@ -149,6 +175,88 @@ pub fn delete_account(account_id: &str) -> Result<(), String> {
 
     fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write config: {}", e))?;
+
+    Ok(())
+}
+
+// JMAP account storage functions
+fn get_jmap_config_path() -> Result<PathBuf, String> {
+    let config_dir = dirs::config_dir()
+        .ok_or("Could not find config directory")?
+        .join("MailClient");
+
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    Ok(config_dir.join("jmap_accounts.json"))
+}
+
+pub fn load_jmap_accounts() -> Result<Vec<SavedJmapAccount>, String> {
+    let config_path = get_jmap_config_path()?;
+
+    if !config_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read JMAP config: {}", e))?;
+
+    let config: JmapAppConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse JMAP config: {}", e))?;
+
+    Ok(config.accounts)
+}
+
+pub fn save_jmap_account(account: SavedJmapAccount) -> Result<(), String> {
+    let config_path = get_jmap_config_path()?;
+
+    let mut config = if config_path.exists() {
+        let content = fs::read_to_string(&config_path)
+            .map_err(|e| format!("Failed to read JMAP config: {}", e))?;
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        JmapAppConfig::default()
+    };
+
+    // Update existing or add new
+    let existing_idx = config.accounts.iter().position(|a| a.id == account.id);
+    if let Some(idx) = existing_idx {
+        config.accounts[idx] = account;
+    } else {
+        config.accounts.push(account);
+    }
+
+    let content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize JMAP config: {}", e))?;
+
+    fs::write(&config_path, content)
+        .map_err(|e| format!("Failed to write JMAP config: {}", e))?;
+
+    Ok(())
+}
+
+pub fn delete_jmap_account(account_id: &str) -> Result<(), String> {
+    let config_path = get_jmap_config_path()?;
+
+    if !config_path.exists() {
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read JMAP config: {}", e))?;
+
+    let mut config: JmapAppConfig = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse JMAP config: {}", e))?;
+
+    config.accounts.retain(|a| a.id != account_id);
+
+    let content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize JMAP config: {}", e))?;
+
+    fs::write(&config_path, content)
+        .map_err(|e| format!("Failed to write JMAP config: {}", e))?;
 
     Ok(())
 }

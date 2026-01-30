@@ -1,27 +1,42 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { MailAccount, AutoConfigResult, SavedAccount } from "../types/mail";
+import { MailAccount, JmapAccount, AutoConfigResult, SavedAccount, SavedJmapAccount } from "../types/mail";
+
+type Protocol = "imap" | "jmap";
+type AnyAccount = MailAccount | JmapAccount;
 
 interface Props {
-  onConnect: (account: MailAccount) => Promise<void>;
+  onConnect: (account: AnyAccount, protocol: Protocol) => Promise<void>;
   loading: boolean;
   error: string | null;
 }
 
 function ConnectionForm({ onConnect, loading, error }: Props) {
   const { t } = useTranslation();
-  const [savedAccounts, setSavedAccounts] = useState<SavedAccount[]>([]);
+  const [savedAccounts, setSavedAccounts] = useState<(SavedAccount | SavedJmapAccount)[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [autoConfigLoading, setAutoConfigLoading] = useState(false);
   const [autoConfigStatus, setAutoConfigStatus] = useState<string>("");
   const [savePassword, setSavePassword] = useState(true);
 
-  const [formData, setFormData] = useState<MailAccount>({
+  // Protocol selection
+  const [protocol, setProtocol] = useState<Protocol>("imap");
+
+  // IMAP form data
+  const [imapFormData, setImapFormData] = useState<MailAccount>({
     imapHost: "",
     imapPort: 993,
     smtpHost: "",
     smtpPort: 587,
+    username: "",
+    password: "",
+    displayName: "",
+  });
+
+  // JMAP form data
+  const [jmapFormData, setJmapFormData] = useState<JmapAccount>({
+    jmapUrl: "",
     username: "",
     password: "",
     displayName: "",
@@ -34,8 +49,15 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
 
   const loadSavedAccounts = async () => {
     try {
-      const accounts = await invoke<SavedAccount[]>("get_saved_accounts");
-      setSavedAccounts(accounts);
+      const imapAccounts = await invoke<SavedAccount[]>("get_saved_accounts");
+      // Also try to load JMAP accounts
+      let jmapAccounts: SavedJmapAccount[] = [];
+      try {
+        jmapAccounts = await invoke<SavedJmapAccount[]>("get_saved_jmap_accounts");
+      } catch {
+        // JMAP accounts command may not exist yet
+      }
+      setSavedAccounts([...imapAccounts, ...jmapAccounts]);
     } catch (e) {
       console.error("Failed to load saved accounts:", e);
     }
@@ -43,68 +65,105 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onConnect(formData);
 
-    // After successful connection, offer to save
-    if (!error) {
-      try {
-        const accountId = formData.username;
-        const savedAccount: SavedAccount = {
-          id: accountId,
-          display_name: formData.displayName,
-          username: formData.username,
-          imap_host: formData.imapHost,
-          imap_port: formData.imapPort,
-          smtp_host: formData.smtpHost,
-          smtp_port: formData.smtpPort,
-          password: savePassword ? formData.password : undefined,
-        };
-        await invoke("save_account", { account: savedAccount });
-        await loadSavedAccounts();
-      } catch (e) {
-        console.error("Failed to save account:", e);
-      }
-    }
-  };
+    if (protocol === "imap") {
+      await onConnect(imapFormData, "imap");
 
-  const handleChange = (field: keyof MailAccount, value: string | number) => {
-    setFormData((prev) => ({ ...prev, [field]: value }));
-  };
-
-  // Lookup autoconfig when email is entered
-  const handleEmailChange = async (email: string) => {
-    handleChange("username", email);
-
-    // Only trigger autoconfig lookup if email looks valid
-    if (email.includes("@") && email.split("@")[1]?.includes(".")) {
-      setAutoConfigLoading(true);
-      setAutoConfigStatus(t("accounts.searchingSettings"));
-
-      try {
-        const config = await invoke<AutoConfigResult>("lookup_autoconfig", { email });
-
-        if (config.imap_host) {
-          setFormData((prev) => ({
-            ...prev,
-            imapHost: config.imap_host || prev.imapHost,
-            imapPort: config.imap_port || prev.imapPort,
-            smtpHost: config.smtp_host || prev.smtpHost,
-            smtpPort: config.smtp_port || prev.smtpPort,
-            displayName: config.display_name || prev.displayName,
-          }));
-          setAutoConfigStatus(t("accounts.settingsFound"));
-        } else {
-          setAutoConfigStatus(t("accounts.usingDefaults"));
+      // After successful connection, offer to save
+      if (!error) {
+        try {
+          const accountId = imapFormData.username;
+          const savedAccount: SavedAccount = {
+            id: accountId,
+            display_name: imapFormData.displayName,
+            username: imapFormData.username,
+            imap_host: imapFormData.imapHost,
+            imap_port: imapFormData.imapPort,
+            smtp_host: imapFormData.smtpHost,
+            smtp_port: imapFormData.smtpPort,
+            password: savePassword ? imapFormData.password : undefined,
+          };
+          await invoke("save_account", { account: savedAccount });
+          await loadSavedAccounts();
+        } catch (e) {
+          console.error("Failed to save account:", e);
         }
-      } catch (e) {
-        setAutoConfigStatus(t("accounts.autoConfigFailed"));
-        console.error("AutoConfig failed:", e);
-      } finally {
-        setAutoConfigLoading(false);
-        // Clear status after a few seconds
-        setTimeout(() => setAutoConfigStatus(""), 3000);
+      }
+    } else {
+      await onConnect(jmapFormData, "jmap");
+
+      // After successful connection, save JMAP account
+      if (!error) {
+        try {
+          const accountId = `jmap_${jmapFormData.username}`;
+          const savedAccount: SavedJmapAccount = {
+            id: accountId,
+            displayName: jmapFormData.displayName,
+            username: jmapFormData.username,
+            jmapUrl: jmapFormData.jmapUrl,
+            password: savePassword ? jmapFormData.password : undefined,
+            protocol: "jmap",
+          };
+          await invoke("save_jmap_account", { account: savedAccount });
+          await loadSavedAccounts();
+        } catch (e) {
+          console.error("Failed to save JMAP account:", e);
+        }
       }
     }
+  };
+
+  const handleImapChange = (field: keyof MailAccount, value: string | number) => {
+    setImapFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleJmapChange = (field: keyof JmapAccount, value: string) => {
+    setJmapFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  // Lookup autoconfig when email is entered (only for IMAP)
+  const handleEmailChange = async (email: string) => {
+    if (protocol === "imap") {
+      handleImapChange("username", email);
+
+      // Only trigger autoconfig lookup if email looks valid
+      if (email.includes("@") && email.split("@")[1]?.includes(".")) {
+        setAutoConfigLoading(true);
+        setAutoConfigStatus(t("accounts.searchingSettings"));
+
+        try {
+          const config = await invoke<AutoConfigResult>("lookup_autoconfig", { email });
+
+          if (config.imap_host) {
+            setImapFormData((prev) => ({
+              ...prev,
+              imapHost: config.imap_host || prev.imapHost,
+              imapPort: config.imap_port || prev.imapPort,
+              smtpHost: config.smtp_host || prev.smtpHost,
+              smtpPort: config.smtp_port || prev.smtpPort,
+              displayName: config.display_name || prev.displayName,
+            }));
+            setAutoConfigStatus(t("accounts.settingsFound"));
+          } else {
+            setAutoConfigStatus(t("accounts.usingDefaults"));
+          }
+        } catch (e) {
+          setAutoConfigStatus(t("accounts.autoConfigFailed"));
+          console.error("AutoConfig failed:", e);
+        } finally {
+          setAutoConfigLoading(false);
+          // Clear status after a few seconds
+          setTimeout(() => setAutoConfigStatus(""), 3000);
+        }
+      }
+    } else {
+      handleJmapChange("username", email);
+    }
+  };
+
+  // Helper to check if account is JMAP
+  const isJmapAccount = (account: SavedAccount | SavedJmapAccount): account is SavedJmapAccount => {
+    return 'protocol' in account && account.protocol === 'jmap';
   };
 
   // Handle saved account selection
@@ -113,11 +172,17 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
 
     if (accountId === "") {
       // Clear form for new account
-      setFormData({
+      setImapFormData({
         imapHost: "",
         imapPort: 993,
         smtpHost: "",
         smtpPort: 587,
+        username: "",
+        password: "",
+        displayName: "",
+      });
+      setJmapFormData({
+        jmapUrl: "",
         username: "",
         password: "",
         displayName: "",
@@ -127,29 +192,51 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
 
     const account = savedAccounts.find((a) => a.id === accountId);
     if (account) {
-      setFormData({
-        imapHost: account.imap_host,
-        imapPort: account.imap_port,
-        smtpHost: account.smtp_host,
-        smtpPort: account.smtp_port,
-        username: account.username,
-        password: account.password || "",
-        displayName: account.display_name,
-      });
+      if (isJmapAccount(account)) {
+        setProtocol("jmap");
+        setJmapFormData({
+          jmapUrl: account.jmapUrl,
+          username: account.username,
+          password: account.password || "",
+          displayName: account.displayName,
+        });
+      } else {
+        setProtocol("imap");
+        setImapFormData({
+          imapHost: account.imap_host,
+          imapPort: account.imap_port,
+          smtpHost: account.smtp_host,
+          smtpPort: account.smtp_port,
+          username: account.username,
+          password: account.password || "",
+          displayName: account.display_name,
+        });
+      }
     }
   };
 
   const handleDeleteAccount = async (accountId: string) => {
     try {
-      await invoke("delete_saved_account", { accountId });
+      const account = savedAccounts.find((a) => a.id === accountId);
+      if (account && isJmapAccount(account)) {
+        await invoke("delete_saved_jmap_account", { accountId });
+      } else {
+        await invoke("delete_saved_account", { accountId });
+      }
       await loadSavedAccounts();
       if (selectedAccountId === accountId) {
         setSelectedAccountId("");
-        setFormData({
+        setImapFormData({
           imapHost: "",
           imapPort: 993,
           smtpHost: "",
           smtpPort: 587,
+          username: "",
+          password: "",
+          displayName: "",
+        });
+        setJmapFormData({
+          jmapUrl: "",
           username: "",
           password: "",
           displayName: "",
@@ -172,6 +259,42 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
         </div>
       )}
 
+      {/* Protocol Selection */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          {t("accounts.protocol", "Protocol")}
+        </label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="protocol"
+              value="imap"
+              checked={protocol === "imap"}
+              onChange={() => setProtocol("imap")}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-700">IMAP/SMTP</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="protocol"
+              value="jmap"
+              checked={protocol === "jmap"}
+              onChange={() => setProtocol("jmap")}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-700">JMAP</span>
+          </label>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          {protocol === "imap"
+            ? t("accounts.imapDescription", "Traditional email protocol (most servers)")
+            : t("accounts.jmapDescription", "Modern JSON-based protocol (Stalwart, Fastmail)")}
+        </p>
+      </div>
+
       {/* Saved Accounts Dropdown */}
       {savedAccounts.length > 0 && (
         <div className="mb-4">
@@ -187,7 +310,7 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
               <option value="">{t("accounts.newAccount")}</option>
               {savedAccounts.map((account) => (
                 <option key={account.id} value={account.id}>
-                  {account.display_name} ({account.username})
+                  {isJmapAccount(account) ? account.displayName : account.display_name} ({account.username}) [{isJmapAccount(account) ? 'JMAP' : 'IMAP'}]
                 </option>
               ))}
             </select>
@@ -214,8 +337,11 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
           </label>
           <input
             type="text"
-            value={formData.displayName}
-            onChange={(e) => handleChange("displayName", e.target.value)}
+            value={protocol === "imap" ? imapFormData.displayName : jmapFormData.displayName}
+            onChange={(e) => protocol === "imap"
+              ? handleImapChange("displayName", e.target.value)
+              : handleJmapChange("displayName", e.target.value)
+            }
             className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="Max Mustermann"
             required
@@ -228,13 +354,13 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
           </label>
           <input
             type="text"
-            value={formData.username}
+            value={protocol === "imap" ? imapFormData.username : jmapFormData.username}
             onChange={(e) => handleEmailChange(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="mail@example.com"
             required
           />
-          {autoConfigStatus && (
+          {protocol === "imap" && autoConfigStatus && (
             <p className={`text-xs mt-1 ${autoConfigLoading ? "text-blue-600" : autoConfigStatus === t("accounts.settingsFound") ? "text-green-600" : "text-gray-500"}`}>
               {autoConfigLoading && (
                 <span className="inline-block animate-spin mr-1">⟳</span>
@@ -250,8 +376,11 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
           </label>
           <input
             type="password"
-            value={formData.password}
-            onChange={(e) => handleChange("password", e.target.value)}
+            value={protocol === "imap" ? imapFormData.password : jmapFormData.password}
+            onChange={(e) => protocol === "imap"
+              ? handleImapChange("password", e.target.value)
+              : handleJmapChange("password", e.target.value)
+            }
             className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
             required
           />
@@ -270,56 +399,76 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
           </label>
         </div>
 
+        {/* Server Settings - different for IMAP vs JMAP */}
         <div className="border-t pt-4 mt-4">
           <h3 className="text-sm font-medium text-gray-700 mb-3">{t("accounts.serverSettings")}</h3>
 
-          <div className="grid grid-cols-3 gap-2 mb-3">
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-500 mb-1">{t("accounts.imapServer")}</label>
-              <input
-                type="text"
-                value={formData.imapHost}
-                onChange={(e) => handleChange("imapHost", e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                placeholder="imap.example.com"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
-              <input
-                type="number"
-                value={formData.imapPort}
-                onChange={(e) => handleChange("imapPort", parseInt(e.target.value))}
-                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                required
-              />
-            </div>
-          </div>
+          {protocol === "imap" ? (
+            <>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div className="col-span-2">
+                  <label className="block text-xs text-gray-500 mb-1">{t("accounts.imapServer")}</label>
+                  <input
+                    type="text"
+                    value={imapFormData.imapHost}
+                    onChange={(e) => handleImapChange("imapHost", e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="imap.example.com"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
+                  <input
+                    type="number"
+                    value={imapFormData.imapPort}
+                    onChange={(e) => handleImapChange("imapPort", parseInt(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    required
+                  />
+                </div>
+              </div>
 
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-500 mb-1">{t("accounts.smtpServer")}</label>
-              <input
-                type="text"
-                value={formData.smtpHost}
-                onChange={(e) => handleChange("smtpHost", e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                placeholder="smtp.example.com"
-                required
-              />
-            </div>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2">
+                  <label className="block text-xs text-gray-500 mb-1">{t("accounts.smtpServer")}</label>
+                  <input
+                    type="text"
+                    value={imapFormData.smtpHost}
+                    onChange={(e) => handleImapChange("smtpHost", e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    placeholder="smtp.example.com"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
+                  <input
+                    type="number"
+                    value={imapFormData.smtpPort}
+                    onChange={(e) => handleImapChange("smtpPort", parseInt(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                    required
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
             <div>
-              <label className="block text-xs text-gray-500 mb-1">{t("accounts.port")}</label>
+              <label className="block text-xs text-gray-500 mb-1">{t("accounts.jmapUrl", "JMAP Server URL")}</label>
               <input
-                type="number"
-                value={formData.smtpPort}
-                onChange={(e) => handleChange("smtpPort", parseInt(e.target.value))}
+                type="url"
+                value={jmapFormData.jmapUrl}
+                onChange={(e) => handleJmapChange("jmapUrl", e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                placeholder="https://jmap.example.com/.well-known/jmap"
                 required
               />
+              <p className="text-xs text-gray-500 mt-1">
+                {t("accounts.jmapUrlHint", "Usually: https://your-server/.well-known/jmap")}
+              </p>
             </div>
-          </div>
+          )}
         </div>
 
         <button

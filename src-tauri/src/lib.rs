@@ -439,6 +439,22 @@ fn delete_saved_account(account_id: String) -> Result<(), String> {
     storage::delete_account(&account_id)
 }
 
+// JMAP account storage commands
+#[tauri::command]
+fn get_saved_jmap_accounts() -> Result<Vec<storage::SavedJmapAccount>, String> {
+    storage::load_jmap_accounts()
+}
+
+#[tauri::command]
+fn save_jmap_account(account: storage::SavedJmapAccount) -> Result<(), String> {
+    storage::save_jmap_account(account)
+}
+
+#[tauri::command]
+fn delete_saved_jmap_account(account_id: String) -> Result<(), String> {
+    storage::delete_jmap_account(&account_id)
+}
+
 // Sieve commands
 #[tauri::command]
 async fn sieve_list_scripts(host: String, port: u16, username: String, password: String) -> Result<Vec<SieveScript>, String> {
@@ -1062,6 +1078,9 @@ pub fn run() {
             get_saved_accounts,
             save_account,
             delete_saved_account,
+            get_saved_jmap_accounts,
+            save_jmap_account,
+            delete_saved_jmap_account,
             sieve_list_scripts,
             sieve_get_script,
             sieve_save_script,

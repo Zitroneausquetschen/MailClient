@@ -5,6 +5,16 @@ All notable changes to MailClient will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-01-30
+
+### Added
+- Protocol selection when adding new accounts (IMAP/SMTP or JMAP)
+- Separate storage for JMAP accounts
+- Protocol indicator in saved accounts dropdown
+
+### Changed
+- Connection form now shows different fields based on selected protocol
+
 ## [0.3.1] - 2026-01-27
 
 ### Added
@@ -76,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Context menu for email actions
 - Dark header navigation bar
 
+[0.3.2]: https://github.com/Zitroneausquetschen/MailClient/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Zitroneausquetschen/MailClient/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Zitroneausquetschen/MailClient/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Zitroneausquetschen/MailClient/compare/v0.1.2...v0.2.0

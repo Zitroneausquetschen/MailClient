@@ -111,7 +111,12 @@
     "searchingSettings": "Searching for server settings...",
     "settingsFound": "Server settings found!",
     "usingDefaults": "Using default settings",
-    "autoConfigFailed": "Auto configuration failed"
+    "autoConfigFailed": "Auto configuration failed",
+    "protocol": "Protocol",
+    "imapDescription": "Traditional email protocol (most servers)",
+    "jmapDescription": "Modern JSON-based protocol (Stalwart, Fastmail)",
+    "jmapUrl": "JMAP Server URL",
+    "jmapUrlHint": "Usually: https://your-server/.well-known/jmap"
   },
   "settings": {
     "title": "Settings",

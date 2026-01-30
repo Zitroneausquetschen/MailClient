@@ -349,3 +349,11 @@ export interface SavedJmapAccount {
   // Vacation/Out-of-office
   vacation?: VacationSettings;
 }
+
+// Type for any saved account (IMAP or JMAP)
+export type AnySavedAccount = SavedAccount | SavedJmapAccount;
+
+// Type guard for JMAP accounts
+export function isJmapAccount(account: AnySavedAccount): account is SavedJmapAccount {
+  return 'protocol' in account && account.protocol === 'jmap';
+}

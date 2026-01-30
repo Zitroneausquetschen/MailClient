@@ -16,7 +16,7 @@ import AccountSettings from "./components/AccountSettings";
 import MainNavigation from "./components/MainNavigation";
 import UpdateChecker from "./components/UpdateChecker";
 import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
-import { MailAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment } from "./types/mail";
+import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
@@ -198,15 +198,25 @@ function App() {
     };
   }, [activeAccountId, initializing, selectedFolder]);
 
-  const handleConnect = async (account: MailAccount) => {
+  const handleConnect = async (account: MailAccount | JmapAccount, protocol: "imap" | "jmap") => {
     setLoading(true);
     setError(null);
     try {
-      const connectedAccount = await invoke<ConnectedAccount>("connect", { account });
+      let connectedAccount: ConnectedAccount | JmapConnectedAccount;
+
+      if (protocol === "jmap") {
+        const jmapAccount = account as JmapAccount;
+        connectedAccount = await invoke<JmapConnectedAccount>("jmap_connect", { account: jmapAccount });
+        // For JMAP accounts, we don't store IMAP credentials
+        setActiveAccountCredentials(null);
+      } else {
+        const imapAccount = account as MailAccount;
+        connectedAccount = await invoke<ConnectedAccount>("connect", { account: imapAccount });
+        setActiveAccountCredentials(imapAccount);
+      }
+
       setConnectedAccounts((prev) => [...prev, connectedAccount]);
       setEmailSubView("inbox");
-
-      setActiveAccountCredentials(account);
 
       await loadFolders(connectedAccount.id);
       await loadEmails(connectedAccount.id, "INBOX");
@@ -952,7 +962,11 @@ function App() {
   if (connectedAccounts.length === 0 && !showSettings) {
     return (
       <div className="h-full flex items-center justify-center bg-gray-100">
-        <ConnectionForm onConnect={handleConnect} loading={loading} error={error} />
+        <ConnectionForm
+          onConnect={(account, protocol) => handleConnect(account, protocol)}
+          loading={loading}
+          error={error}
+        />
       </div>
     );
   }
@@ -1368,8 +1382,8 @@ function App() {
               </svg>
             </button>
             <ConnectionForm
-              onConnect={async (account) => {
-                await handleConnect(account);
+              onConnect={async (account, protocol) => {
+                await handleConnect(account, protocol);
                 setShowAddAccount(false);
               }}
               loading={loading}
