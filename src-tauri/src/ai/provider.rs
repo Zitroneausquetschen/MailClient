@@ -28,15 +28,18 @@ impl Default for AIProviderType {
 
 /// Available local models for embedded LLM
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
 pub enum LocalModel {
     /// SmolLM 135M - Very fast, basic capabilities (~80MB)
+    #[serde(rename = "smol_l_m135_m")]
     SmolLM135M,
     /// Qwen2 0.5B - Good balance (~350MB)
+    #[serde(rename = "qwen2_0_5b")]
     Qwen2_0_5B,
     /// TinyLlama 1.1B - Recommended (~600MB)
+    #[serde(rename = "tiny_llama1_1b")]
     TinyLlama1_1B,
     /// Phi-3 Mini - Best quality (~2GB)
+    #[serde(rename = "phi3_mini")]
     Phi3Mini,
 }
 
