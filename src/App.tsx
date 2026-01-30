@@ -2039,10 +2039,13 @@ function App() {
                       <EmailView
                         email={selectedEmail}
                         folders={folders}
+                        currentFolder={selectedFolder}
                         onReply={handleReply}
                         onDelete={() => handleDeleteEmail(selectedEmail.uid)}
                         onMove={(folder) => handleMoveEmail(selectedEmail.uid, folder)}
                         onDownloadAttachment={handleDownloadAttachment}
+                        onMarkSpam={() => handleMarkAsSpam(selectedEmail.uid)}
+                        onMarkNotSpam={() => handleMarkAsNotSpam(selectedEmail.uid)}
                       />
                     ) : (
                       <div className="h-full flex items-center justify-center text-gray-400">

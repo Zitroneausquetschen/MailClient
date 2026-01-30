@@ -6,16 +6,46 @@ import EmailAIPanel from "./EmailAIPanel";
 interface Props {
   email: Email;
   folders: Folder[];
+  currentFolder: string;
   onReply: (email: Email) => void;
   onDelete: () => void;
   onMove: (folder: string) => void;
   onDownloadAttachment?: (attachment: Attachment) => Promise<void>;
+  onMarkSpam?: () => Promise<void>;
+  onMarkNotSpam?: () => Promise<void>;
 }
 
-function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttachment }: Props) {
+function EmailView({ email, folders, currentFolder, onReply, onDelete, onMove, onDownloadAttachment, onMarkSpam, onMarkNotSpam }: Props) {
   const { t, i18n } = useTranslation();
   const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [downloadingAttachment, setDownloadingAttachment] = useState<string | null>(null);
+  const [markingSpam, setMarkingSpam] = useState(false);
+
+  // Check if current folder is a spam folder
+  const isSpamFolder = currentFolder.toLowerCase() === "spam" ||
+    currentFolder.toLowerCase() === "junk" ||
+    currentFolder.toLowerCase().includes("spam") ||
+    currentFolder.toLowerCase().includes("junk");
+
+  const handleMarkSpam = async () => {
+    if (!onMarkSpam) return;
+    setMarkingSpam(true);
+    try {
+      await onMarkSpam();
+    } finally {
+      setMarkingSpam(false);
+    }
+  };
+
+  const handleMarkNotSpam = async () => {
+    if (!onMarkNotSpam) return;
+    setMarkingSpam(true);
+    try {
+      await onMarkNotSpam();
+    } finally {
+      setMarkingSpam(false);
+    }
+  };
 
   const formatDate = (dateStr: string): string => {
     try {
@@ -88,6 +118,34 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
             >
               {t("common.delete")}
             </button>
+
+            {/* Spam/Not Spam buttons */}
+            {!isSpamFolder && onMarkSpam && (
+              <button
+                onClick={handleMarkSpam}
+                disabled={markingSpam}
+                className="px-3 py-1.5 text-sm border border-orange-300 text-orange-600 rounded hover:bg-orange-50 disabled:opacity-50 flex items-center gap-1"
+              >
+                {markingSpam ? (
+                  <div className="w-4 h-4 border-2 border-orange-300 border-t-orange-600 rounded-full animate-spin" />
+                ) : (
+                  <>🚫 {t("ai.actions.markSpam", "Spam")}</>
+                )}
+              </button>
+            )}
+            {isSpamFolder && onMarkNotSpam && (
+              <button
+                onClick={handleMarkNotSpam}
+                disabled={markingSpam}
+                className="px-3 py-1.5 text-sm border border-green-300 text-green-600 rounded hover:bg-green-50 disabled:opacity-50 flex items-center gap-1"
+              >
+                {markingSpam ? (
+                  <div className="w-4 h-4 border-2 border-green-300 border-t-green-600 rounded-full animate-spin" />
+                ) : (
+                  <>✅ {t("ai.actions.markNotSpam", "Kein Spam")}</>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
