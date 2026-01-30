@@ -4,12 +4,34 @@
     "version": "Version {{version}}"
   },
   "nav": {
+    "today": "Today",
     "email": "Email",
     "calendar": "Calendar",
     "contacts": "Contacts",
     "tasks": "Tasks",
     "notes": "Notes",
     "settings": "Settings"
+  },
+  "dayAgent": {
+    "greetingMorning": "Good Morning",
+    "greetingAfternoon": "Good Afternoon",
+    "greetingEvening": "Good Evening",
+    "selectAccount": "Please select an account",
+    "refresh": "Refresh",
+    "loading": "Loading briefing...",
+    "emails": "Emails",
+    "events": "Events",
+    "tasks": "Tasks",
+    "remaining": "remaining",
+    "importantEmails": "Important Emails",
+    "todayEvents": "Today's Events",
+    "overdueTasks": "Overdue Tasks",
+    "dueTodayTasks": "Due Today",
+    "suggestions": "Suggestions",
+    "progress": "Progress",
+    "emailsRead": "emails read",
+    "tasksCompleted": "tasks completed",
+    "eventsAttended": "events attended"
   },
   "email": {
     "inbox": "Inbox",

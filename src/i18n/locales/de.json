@@ -4,12 +4,34 @@
     "version": "Version {{version}}"
   },
   "nav": {
+    "today": "Heute",
     "email": "E-Mail",
     "calendar": "Kalender",
     "contacts": "Kontakte",
     "tasks": "Aufgaben",
     "notes": "Notizen",
     "settings": "Einstellungen"
+  },
+  "dayAgent": {
+    "greetingMorning": "Guten Morgen",
+    "greetingAfternoon": "Guten Tag",
+    "greetingEvening": "Guten Abend",
+    "selectAccount": "Bitte wähle einen Account aus",
+    "refresh": "Aktualisieren",
+    "loading": "Lade Briefing...",
+    "emails": "E-Mails",
+    "events": "Termine",
+    "tasks": "Aufgaben",
+    "remaining": "offen",
+    "importantEmails": "Wichtige E-Mails",
+    "todayEvents": "Termine heute",
+    "overdueTasks": "Überfällige Aufgaben",
+    "dueTodayTasks": "Heute fällig",
+    "suggestions": "Empfehlungen",
+    "progress": "Fortschritt",
+    "emailsRead": "E-Mails gelesen",
+    "tasksCompleted": "Aufgaben erledigt",
+    "eventsAttended": "Termine wahrgenommen"
   },
   "email": {
     "inbox": "Posteingang",

@@ -1712,6 +1712,32 @@ Gib NUR den Antworttext zurück, keine Erklärungen."#,
     provider.complete(messages).await
 }
 
+// === Day Agent Commands ===
+
+#[tauri::command]
+async fn get_day_briefing(
+    account_id: String,
+    caldav_config: Option<ai::CalDavConfig>,
+) -> Result<ai::DayState, String> {
+    ai::generate_day_briefing(
+        &account_id,
+        caldav_config.as_ref(),
+    ).await
+}
+
+#[tauri::command]
+async fn refresh_day_state(
+    account_id: String,
+    caldav_config: Option<ai::CalDavConfig>,
+    morning_baseline: ai::DayProgress,
+) -> Result<ai::DayState, String> {
+    ai::refresh_day_state(
+        &account_id,
+        caldav_config.as_ref(),
+        &morning_baseline,
+    ).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1858,6 +1884,9 @@ pub fn run() {
             // AI Chat commands
             ai_chat,
             ai_generate_reply,
+            // Day Agent commands
+            get_day_briefing,
+            refresh_day_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

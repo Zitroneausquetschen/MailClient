@@ -19,11 +19,12 @@ import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
 import CategoryTabs from "./components/CategoryTabs";
 import CategoryManager from "./components/CategoryManager";
 import AIChatPanel from "./components/AIChatPanel";
+import DayAgentPanel from "./components/DayAgentPanel";
 import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount, EmailCategory } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
-type MainTab = "email" | "calendar" | "contacts" | "tasks" | "notes";
+type MainTab = "today" | "email" | "calendar" | "contacts" | "tasks" | "notes";
 type EmailSubView = "inbox" | "compose" | "sieve";
 
 function App() {
@@ -1527,6 +1528,24 @@ function App() {
 
       {/* Content based on main tab */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {mainTab === "today" && !showSettings && (
+          <DayAgentPanel
+            accountId={activeAccountId}
+            caldavConfig={activeAccountSettings ? {
+              host: activeAccountSettings.imap_host,
+              username: activeAccountSettings.username,
+              password: activeAccountSettings.password || "",
+              calendarIds: [],
+            } : null}
+            onNavigateToEmail={(_uid, folder) => {
+              setMainTab("email");
+              setSelectedFolder(folder);
+            }}
+            onNavigateToCalendar={() => setMainTab("calendar")}
+            onNavigateToTasks={() => setMainTab("tasks")}
+          />
+        )}
+
         {mainTab === "email" && !showSettings && (
           <>
             {/* Email Sub-Header/Toolbar */}
