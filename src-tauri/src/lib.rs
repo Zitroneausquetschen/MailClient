@@ -1394,7 +1394,7 @@ fn get_local_models_status() -> Result<Vec<LocalModelInfo>, String> {
 
     Ok(models_info.into_iter().map(|(model, downloaded, file_size)| {
         LocalModelInfo {
-            id: format!("{:?}", model).to_lowercase(),
+            id: model.id().to_string(),
             name: model.display_name().to_string(),
             size_mb: model.file_size_mb(),
             downloaded,

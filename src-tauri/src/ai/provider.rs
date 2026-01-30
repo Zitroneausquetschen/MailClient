@@ -47,6 +47,16 @@ impl Default for LocalModel {
 }
 
 impl LocalModel {
+    /// Get consistent ID for frontend matching
+    pub fn id(&self) -> &'static str {
+        match self {
+            LocalModel::SmolLM135M => "smol_l_m135_m",
+            LocalModel::Qwen2_0_5B => "qwen2_0_5b",
+            LocalModel::TinyLlama1_1B => "tiny_llama1_1b",
+            LocalModel::Phi3Mini => "phi3_mini",
+        }
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             LocalModel::SmolLM135M => "SmolLM 135M (80MB) - Schnell",
