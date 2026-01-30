@@ -17,15 +17,19 @@ jobs:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             name: 'macOS-ARM64'
+            arch: 'aarch64'
           - platform: 'macos-latest'
             args: '--target x86_64-apple-darwin'
             name: 'macOS-Intel'
+            arch: 'x86_64'
           - platform: 'ubuntu-22.04'
             args: ''
             name: 'Linux'
+            arch: 'x86_64'
           - platform: 'windows-latest'
             args: ''
             name: 'Windows'
+            arch: 'x86_64'
 
     runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.name }})
@@ -63,6 +67,22 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      # Rename macOS updater artifacts to include architecture BEFORE uploading
+      - name: Rename macOS artifacts for uniqueness
+        if: matrix.platform == 'macos-latest'
+        run: |
+          ARCH="${{ matrix.arch }}"
+          # Find and rename .app.tar.gz files
+          find src-tauri/target -name "*.app.tar.gz" -type f | while read f; do
+            dir=$(dirname "$f")
+            newname="MailClient_${ARCH}.app.tar.gz"
+            echo "Renaming $f to $dir/$newname"
+            mv "$f" "$dir/$newname"
+            if [ -f "${f}.sig" ]; then
+              mv "${f}.sig" "$dir/${newname}.sig"
+            fi
+          done
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -78,7 +98,7 @@ jobs:
             src-tauri/target/*/release/bundle/macos/*.app
           if-no-files-found: ignore
 
-      # Upload updater artifacts (signatures and update manifest)
+      # Upload updater artifacts (signatures)
       - name: Upload updater artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -87,6 +107,8 @@ jobs:
             src-tauri/target/release/bundle/msi/*.msi.sig
             src-tauri/target/release/bundle/nsis/*.exe.sig
             src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
+            src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
             src-tauri/target/release/bundle/macos/*.app.tar.gz
             src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
             src-tauri/target/*/release/bundle/macos/*.app.tar.gz
@@ -110,53 +132,89 @@ jobs:
           path: artifacts
 
       - name: Display structure of downloaded files
-        run: ls -R artifacts
+        run: find artifacts -type f | head -100
 
-      - name: Generate latest.json for updater
+      - name: Flatten artifacts and generate latest.json
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           REPO_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}"
 
-          cat > latest.json << EOF
+          mkdir -p release-files
+
+          # Copy all files to release-files with flattening
+          find artifacts -type f \( -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.msi" -o -name "*.exe" -o -name "*.sig" -o -name "*.tar.gz" \) | while read f; do
+            filename=$(basename "$f")
+            # Skip if file already exists (avoid duplicates)
+            if [ ! -f "release-files/$filename" ]; then
+              cp "$f" "release-files/$filename"
+              echo "Copied: $filename"
+            else
+              echo "Skipped duplicate: $filename"
+            fi
+          done
+
+          ls -la release-files/
+
+          # Read signatures from .sig files
+          WIN_SIG=""
+          LINUX_SIG=""
+          MAC_ARM_SIG=""
+          MAC_INTEL_SIG=""
+
+          # Windows signature
+          if [ -f "release-files/MailClient_${VERSION}_x64-setup.exe.sig" ]; then
+            WIN_SIG=$(cat "release-files/MailClient_${VERSION}_x64-setup.exe.sig")
+          fi
+
+          # Linux signature
+          if [ -f "release-files/MailClient_${VERSION}_amd64.AppImage.tar.gz.sig" ]; then
+            LINUX_SIG=$(cat "release-files/MailClient_${VERSION}_amd64.AppImage.tar.gz.sig")
+          fi
+
+          # macOS ARM64 signature
+          if [ -f "release-files/MailClient_aarch64.app.tar.gz.sig" ]; then
+            MAC_ARM_SIG=$(cat "release-files/MailClient_aarch64.app.tar.gz.sig")
+          fi
+
+          # macOS Intel signature
+          if [ -f "release-files/MailClient_x86_64.app.tar.gz.sig" ]; then
+            MAC_INTEL_SIG=$(cat "release-files/MailClient_x86_64.app.tar.gz.sig")
+          fi
+
+          # Generate latest.json
+          cat > release-files/latest.json << EOF
           {
             "version": "${VERSION}",
             "notes": "Release v${VERSION}",
             "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "platforms": {
               "linux-x86_64": {
-                "url": "${REPO_URL}/mail-client_${VERSION}_amd64.AppImage.tar.gz",
-                "signature": ""
+                "url": "${REPO_URL}/MailClient_${VERSION}_amd64.AppImage.tar.gz",
+                "signature": "${LINUX_SIG}"
               },
               "windows-x86_64": {
-                "url": "${REPO_URL}/MailClient_${VERSION}_x64-setup.nsis.zip",
-                "signature": ""
+                "url": "${REPO_URL}/MailClient_${VERSION}_x64-setup.exe",
+                "signature": "${WIN_SIG}"
               },
               "darwin-x86_64": {
-                "url": "${REPO_URL}/MailClient.app.tar.gz",
-                "signature": ""
+                "url": "${REPO_URL}/MailClient_x86_64.app.tar.gz",
+                "signature": "${MAC_INTEL_SIG}"
               },
               "darwin-aarch64": {
-                "url": "${REPO_URL}/MailClient.app.tar.gz",
-                "signature": ""
+                "url": "${REPO_URL}/MailClient_aarch64.app.tar.gz",
+                "signature": "${MAC_ARM_SIG}"
               }
             }
           }
           EOF
 
-          cat latest.json
+          echo "Generated latest.json:"
+          cat release-files/latest.json
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            artifacts/**/*.dmg
-            artifacts/**/*.deb
-            artifacts/**/*.AppImage
-            artifacts/**/*.msi
-            artifacts/**/*.exe
-            artifacts/**/*.sig
-            artifacts/**/*.tar.gz
-            latest.json
+          files: release-files/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
