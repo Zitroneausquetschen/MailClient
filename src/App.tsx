@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import ConnectionForm from "./components/ConnectionForm";
-import FolderList from "./components/FolderList";
+import UnifiedFolderTree from "./components/UnifiedFolderTree";
 import EmailList from "./components/EmailList";
 import EmailView from "./components/EmailView";
 import Composer from "./components/Composer";
-import AccountSidebar from "./components/AccountSidebar";
 import SieveEditor from "./components/SieveEditor";
+import JmapSieveEditor from "./components/JmapSieveEditor";
 import ContactsView from "./components/ContactsView";
 import CalendarView from "./components/CalendarView";
 import TasksView from "./components/TasksView";
@@ -29,7 +29,6 @@ function App() {
   // Main tab state
   const [mainTab, setMainTab] = useState<MainTab>("email");
   const [showSettings, setShowSettings] = useState(false);
-  const [showAddAccount, setShowAddAccount] = useState(false);
 
   // Account state
   const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
@@ -41,6 +40,7 @@ function App() {
   // Email view state
   const [emailSubView, setEmailSubView] = useState<EmailSubView>("inbox");
   const [folders, setFolders] = useState<Folder[]>([]);
+  const [accountFolders, setAccountFolders] = useState<Record<string, Folder[]>>({});
   const [selectedFolder, setSelectedFolder] = useState<string>("INBOX");
   const [emails, setEmails] = useState<EmailHeader[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
@@ -84,6 +84,16 @@ function App() {
   const [selectedUids, setSelectedUids] = useState<Set<number>>(new Set());
   const [multiSelectMode, setMultiSelectMode] = useState(false);
 
+  // Create task from email state
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [_taskFromEmail, setTaskFromEmail] = useState<{ subject: string; from: string; date: string } | null>(null);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskNotes, setNewTaskNotes] = useState("");
+  const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [taskAccountId, setTaskAccountId] = useState<string>("");
+  const [savedAccountsForTasks, setSavedAccountsForTasks] = useState<SavedAccount[]>([]);
+
   // Helper to set error and play sound
   const showError = (message: string) => {
     setError(message);
@@ -94,44 +104,128 @@ function App() {
   useEffect(() => {
     const autoConnect = async () => {
       try {
-        const savedAccounts = await invoke<SavedAccount[]>("get_saved_accounts");
-        const accountsWithPassword = savedAccounts.filter((a) => a.password);
-
-        let firstAccount: MailAccount | null = null;
         const newConnectedAccounts: ConnectedAccount[] = [];
+        let hasSetFirstAccount = false;
 
-        for (const saved of accountsWithPassword) {
-          try {
-            const account: MailAccount = {
-              imapHost: saved.imap_host,
-              imapPort: saved.imap_port,
-              smtpHost: saved.smtp_host,
-              smtpPort: saved.smtp_port,
-              username: saved.username,
-              password: saved.password!,
-              displayName: saved.display_name,
-            };
+        // Load and connect IMAP accounts
+        try {
+          const savedAccounts = await invoke<SavedAccount[]>("get_saved_accounts");
+          const accountsWithPassword = savedAccounts.filter((a) => a.password);
 
-            const connectedAccount = await invoke<ConnectedAccount>("connect", { account });
+          for (const saved of accountsWithPassword) {
+            try {
+              const account: MailAccount = {
+                imapHost: saved.imap_host,
+                imapPort: saved.imap_port,
+                smtpHost: saved.smtp_host,
+                smtpPort: saved.smtp_port,
+                username: saved.username,
+                password: saved.password!,
+                displayName: saved.display_name,
+              };
 
-            if (!newConnectedAccounts.find(a => a.id === connectedAccount.id)) {
-              newConnectedAccounts.push(connectedAccount);
+              const connectedAccount = await invoke<ConnectedAccount>("connect", { account });
+
+              if (!newConnectedAccounts.find(a => a.id === connectedAccount.id)) {
+                newConnectedAccounts.push(connectedAccount);
+              }
+
+              if (!hasSetFirstAccount) {
+                hasSetFirstAccount = true;
+                setActiveAccountCredentials(account);
+                setActiveAccountSettings(saved);
+              }
+            } catch (e) {
+              console.error(`Failed to auto-connect IMAP ${saved.username}:`, e);
             }
-
-            if (!firstAccount) {
-              firstAccount = account;
-              setActiveAccountCredentials(account);
-              setActiveAccountSettings(saved);
-            }
-          } catch (e) {
-            console.error(`Failed to auto-connect ${saved.username}:`, e);
           }
+        } catch (e) {
+          console.error("Failed to load IMAP accounts:", e);
+        }
+
+        // Load and connect JMAP accounts
+        try {
+          const savedJmapAccounts = await invoke<{
+            id: string;
+            displayName: string;
+            username: string;
+            jmapUrl: string;
+            password?: string;
+            protocol: string;
+          }[]>("get_saved_jmap_accounts");
+
+          const jmapAccountsWithPassword = savedJmapAccounts.filter((a) => a.password);
+
+          for (const saved of jmapAccountsWithPassword) {
+            try {
+              const account: JmapAccount = {
+                jmapUrl: saved.jmapUrl,
+                username: saved.username,
+                password: saved.password!,
+                displayName: saved.displayName,
+              };
+
+              const connectedAccount = await invoke<JmapConnectedAccount>("jmap_connect", { account });
+
+              if (!newConnectedAccounts.find(a => a.id === connectedAccount.id)) {
+                newConnectedAccounts.push(connectedAccount);
+              }
+
+              if (!hasSetFirstAccount) {
+                hasSetFirstAccount = true;
+                setActiveAccountCredentials(null); // JMAP doesn't use IMAP credentials
+              }
+            } catch (e) {
+              console.error(`Failed to auto-connect JMAP ${saved.username}:`, e);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to load JMAP accounts:", e);
         }
 
         setConnectedAccounts(newConnectedAccounts);
 
+        // Load folders for all connected accounts
+        const allFolders: Record<string, Folder[]> = {};
+        for (const account of newConnectedAccounts) {
+          try {
+            let folderList: Folder[];
+            if (account.id.startsWith("jmap_")) {
+              const mailboxes = await invoke<{
+                id: string;
+                name: string;
+                parentId: string | null;
+                role: string | null;
+                totalEmails: number;
+                unreadEmails: number;
+                sortOrder: number;
+              }[]>("jmap_list_mailboxes", { accountId: account.id });
+
+              folderList = mailboxes.map(mb => ({
+                name: mb.id,
+                delimiter: "/",
+                unreadCount: mb.unreadEmails,
+                totalCount: mb.totalEmails,
+                displayName: mb.name,
+                role: mb.role,
+              } as Folder & { displayName?: string; role?: string | null }));
+            } else {
+              folderList = await invoke<Folder[]>("list_folders", { accountId: account.id });
+            }
+            allFolders[account.id] = folderList;
+          } catch (e) {
+            console.error(`Failed to load folders for ${account.id}:`, e);
+            allFolders[account.id] = [];
+          }
+        }
+        setAccountFolders(allFolders);
+
         if (newConnectedAccounts.length > 0) {
           setActiveAccountId(newConnectedAccounts[0].id);
+          // Set folders for the first account
+          if (allFolders[newConnectedAccounts[0].id]) {
+            setFolders(allFolders[newConnectedAccounts[0].id]);
+          }
         }
       } catch (e) {
         console.error("Failed to load saved accounts:", e);
@@ -145,11 +239,15 @@ function App() {
 
   // Load folders and emails when active account changes
   useEffect(() => {
-    if (activeAccountId && !initializing) {
-      loadFolders(activeAccountId);
-      loadEmails(activeAccountId, "INBOX");
-      setSelectedFolder("INBOX");
-    }
+    const loadAccountData = async () => {
+      if (activeAccountId && !initializing) {
+        const loadedFolders = await loadFoldersAndReturn(activeAccountId);
+        const inboxFolder = findInboxFolder(loadedFolders, isJmapAccountId(activeAccountId));
+        await loadEmails(activeAccountId, inboxFolder);
+        setSelectedFolder(inboxFolder);
+      }
+    };
+    loadAccountData();
   }, [activeAccountId, initializing]);
 
   // Polling for new emails
@@ -209,44 +307,48 @@ function App() {
         connectedAccount = await invoke<JmapConnectedAccount>("jmap_connect", { account: jmapAccount });
         // For JMAP accounts, we don't store IMAP credentials
         setActiveAccountCredentials(null);
+
+        // Save JMAP account
+        const savedAccount = {
+          id: `jmap_${jmapAccount.username}`,
+          displayName: jmapAccount.displayName,
+          username: jmapAccount.username,
+          jmapUrl: jmapAccount.jmapUrl,
+          password: jmapAccount.password,
+          protocol: "jmap",
+        };
+        await invoke("save_jmap_account", { account: savedAccount });
       } else {
         const imapAccount = account as MailAccount;
         connectedAccount = await invoke<ConnectedAccount>("connect", { account: imapAccount });
         setActiveAccountCredentials(imapAccount);
+
+        // Save IMAP account
+        const savedAccount = {
+          id: imapAccount.username,
+          display_name: imapAccount.displayName,
+          username: imapAccount.username,
+          imap_host: imapAccount.imapHost,
+          imap_port: imapAccount.imapPort,
+          smtp_host: imapAccount.smtpHost,
+          smtp_port: imapAccount.smtpPort,
+          password: imapAccount.password,
+        };
+        await invoke("save_account", { account: savedAccount });
       }
 
       setConnectedAccounts((prev) => [...prev, connectedAccount]);
       setEmailSubView("inbox");
 
-      await loadFolders(connectedAccount.id);
-      await loadEmails(connectedAccount.id, "INBOX");
-      setSelectedFolder("INBOX");
+      const loadedFolders = await loadFoldersAndReturn(connectedAccount.id);
+      const inboxFolder = findInboxFolder(loadedFolders, isJmapAccountId(connectedAccount.id));
+      await loadEmails(connectedAccount.id, inboxFolder);
+      setSelectedFolder(inboxFolder);
       setActiveAccountId(connectedAccount.id);
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDisconnect = async (accountId: string) => {
-    try {
-      await invoke("disconnect", { accountId });
-      setConnectedAccounts((prev) => prev.filter((a) => a.id !== accountId));
-
-      if (activeAccountId === accountId) {
-        const remaining = connectedAccounts.filter((a) => a.id !== accountId);
-        if (remaining.length > 0) {
-          await switchAccount(remaining[0].id);
-        } else {
-          setActiveAccountId(null);
-          setFolders([]);
-          setEmails([]);
-          setSelectedEmail(null);
-        }
-      }
-    } catch (e) {
-      setError(String(e));
     }
   };
 
@@ -265,15 +367,98 @@ function App() {
       console.error("Failed to load account settings:", e);
     }
 
-    await loadFolders(accountId);
-    await loadEmails(accountId, "INBOX");
-    setSelectedFolder("INBOX");
+    const loadedFolders = await loadFoldersAndReturn(accountId);
+    const inboxFolder = findInboxFolder(loadedFolders, isJmapAccountId(accountId));
+    await loadEmails(accountId, inboxFolder);
+    setSelectedFolder(inboxFolder);
+  };
+
+  // Helper to check if account is JMAP
+  const isJmapAccountId = (accountId: string) => accountId.startsWith("jmap_");
+
+  // Helper to find inbox folder (by role for JMAP, by name for IMAP)
+  const findInboxFolder = (folderList: Folder[], isJmap: boolean): string => {
+    if (isJmap) {
+      // For JMAP, find folder with role "Inbox" or "inbox"
+      const extendedFolders = folderList as (Folder & { role?: string | null })[];
+      const inbox = extendedFolders.find(f =>
+        f.role?.toLowerCase() === "inbox"
+      );
+      if (inbox) return inbox.name; // name contains the mailbox ID for JMAP
+    }
+    // Default to INBOX for IMAP or fallback
+    return "INBOX";
+  };
+
+  // Load folders and return them (for use in handleConnect and switchAccount)
+  const loadFoldersAndReturn = async (accountId: string): Promise<Folder[]> => {
+    try {
+      let folderList: Folder[];
+
+      if (isJmapAccountId(accountId)) {
+        const mailboxes = await invoke<{
+          id: string;
+          name: string;
+          parentId: string | null;
+          role: string | null;
+          totalEmails: number;
+          unreadEmails: number;
+          sortOrder: number;
+        }[]>("jmap_list_mailboxes", { accountId });
+
+        folderList = mailboxes.map(mb => ({
+          name: mb.id,
+          delimiter: "/",
+          unreadCount: mb.unreadEmails,
+          totalCount: mb.totalEmails,
+          displayName: mb.name,
+          role: mb.role,
+        } as Folder & { displayName?: string; role?: string | null }));
+      } else {
+        folderList = await invoke<Folder[]>("list_folders", { accountId });
+      }
+
+      // Update both the current folders and the accountFolders map
+      setFolders(folderList);
+      setAccountFolders(prev => ({ ...prev, [accountId]: folderList }));
+      return folderList;
+    } catch (e) {
+      setError(String(e));
+      return [];
+    }
   };
 
   const loadFolders = async (accountId: string) => {
     try {
-      const folderList = await invoke<Folder[]>("list_folders", { accountId });
+      let folderList: Folder[];
+
+      if (isJmapAccountId(accountId)) {
+        // JMAP: use jmap_list_mailboxes and convert to Folder format
+        const mailboxes = await invoke<{
+          id: string;
+          name: string;
+          parentId: string | null;
+          role: string | null;
+          totalEmails: number;
+          unreadEmails: number;
+          sortOrder: number;
+        }[]>("jmap_list_mailboxes", { accountId });
+
+        folderList = mailboxes.map(mb => ({
+          name: mb.id, // Use ID as name for JMAP (we'll display mb.name)
+          delimiter: "/",
+          unreadCount: mb.unreadEmails,
+          totalCount: mb.totalEmails,
+          // Store display name and role in a way the FolderList can use
+          displayName: mb.name,
+          role: mb.role,
+        } as Folder & { displayName?: string; role?: string | null }));
+      } else {
+        folderList = await invoke<Folder[]>("list_folders", { accountId });
+      }
+
       setFolders(folderList);
+      setAccountFolders(prev => ({ ...prev, [accountId]: folderList }));
     } catch (e) {
       setError(String(e));
     }
@@ -285,7 +470,8 @@ function App() {
 
     const isCacheEnabled = activeAccountSettings?.cache_enabled ?? false;
 
-    if (isCacheEnabled) {
+    // Skip cache for JMAP (not implemented yet)
+    if (isCacheEnabled && !isJmapAccountId(accountId)) {
       try {
         const cachedHeaders = await invoke<EmailHeader[]>("get_cached_headers", {
           accountId,
@@ -303,12 +489,58 @@ function App() {
 
     setLoading(true);
     try {
-      const headers = await invoke<EmailHeader[]>("fetch_headers", {
-        accountId,
-        folder,
-        start: 0,
-        count: 50,
-      });
+      let headers: EmailHeader[];
+
+      if (isJmapAccountId(accountId)) {
+        // JMAP: use jmap_fetch_email_list and convert to EmailHeader format
+        const jmapHeaders = await invoke<{
+          id: string;
+          blobId: string;
+          threadId: string;
+          mailboxIds: string[];
+          subject: string;
+          from: string;
+          to: string;
+          date: string;
+          isRead: boolean;
+          isFlagged: boolean;
+          isAnswered: boolean;
+          isDraft: boolean;
+          hasAttachments: boolean;
+          size: number;
+          preview: string;
+        }[]>("jmap_fetch_email_list", {
+          accountId,
+          mailboxId: folder, // folder is actually the mailbox ID for JMAP
+          position: 0,
+          limit: 50,
+        });
+
+        headers = jmapHeaders.map(jh => ({
+          uid: 0, // JMAP doesn't use UIDs, we'll use the ID differently
+          subject: jh.subject,
+          from: jh.from,
+          to: jh.to,
+          date: jh.date,
+          isRead: jh.isRead,
+          isFlagged: jh.isFlagged,
+          isAnswered: jh.isAnswered,
+          isDraft: jh.isDraft,
+          flags: [],
+          hasAttachments: jh.hasAttachments,
+          // Store JMAP-specific data
+          jmapId: jh.id,
+          preview: jh.preview,
+        } as EmailHeader & { jmapId?: string; preview?: string }));
+      } else {
+        headers = await invoke<EmailHeader[]>("fetch_headers", {
+          accountId,
+          folder,
+          start: 0,
+          count: 50,
+        });
+      }
+
       setEmails(headers);
 
       if (isCacheEnabled && headers.length > 0) {
@@ -502,11 +734,95 @@ function App() {
     }
   };
 
-  const handleSelectEmail = async (uid: number) => {
+  // Handle folder selection from unified tree (includes account switch if needed)
+  const handleUnifiedFolderSelect = async (accountId: string, folder: string) => {
+    clearSearch();
+    if (activeAccountId !== accountId) {
+      await switchAccount(accountId);
+    }
+    // After switching, load emails for the selected folder
+    await loadEmails(accountId, folder);
+  };
+
+  const handleSelectEmail = async (uid: number, jmapId?: string) => {
     if (!activeAccountId) return;
 
     const isCacheEnabled = activeAccountSettings?.cache_enabled ?? false;
 
+    // Handle JMAP accounts
+    if (isJmapAccountId(activeAccountId) && jmapId) {
+      setLoading(true);
+      try {
+        const jmapEmail = await invoke<{
+          id: string;
+          blobId: string;
+          threadId: string;
+          mailboxIds: string[];
+          subject: string;
+          from: string;
+          to: string;
+          cc: string;
+          bcc: string;
+          date: string;
+          bodyText: string;
+          bodyHtml: string;
+          attachments: { blobId: string; name: string; mimeType: string; size: number }[];
+          isRead: boolean;
+          isFlagged: boolean;
+          isAnswered: boolean;
+          isDraft: boolean;
+          size: number;
+        }>("jmap_fetch_email", {
+          accountId: activeAccountId,
+          emailId: jmapId,
+        });
+
+        // Convert to Email format for display
+        const email: Email = {
+          uid: 0,
+          subject: jmapEmail.subject,
+          from: jmapEmail.from,
+          to: jmapEmail.to,
+          cc: jmapEmail.cc,
+          date: jmapEmail.date,
+          bodyText: jmapEmail.bodyText,
+          bodyHtml: jmapEmail.bodyHtml,
+          attachments: jmapEmail.attachments.map(a => ({
+            filename: a.name,
+            mimeType: a.mimeType,
+            size: a.size,
+            partId: a.blobId, // Use blobId as partId for JMAP
+            encoding: "base64",
+          })),
+          isRead: jmapEmail.isRead,
+          isFlagged: jmapEmail.isFlagged,
+          isAnswered: jmapEmail.isAnswered,
+          isDraft: jmapEmail.isDraft,
+          flags: [],
+          jmapId: jmapEmail.id,
+        } as Email & { jmapId?: string };
+
+        setSelectedEmail(email);
+
+        // Mark as read if not already
+        if (!jmapEmail.isRead) {
+          await invoke("jmap_mark_read", { accountId: activeAccountId, emailId: jmapId });
+          setEmails((prev) =>
+            prev.map((e) => {
+              const emailWithJmapId = e as EmailHeader & { jmapId?: string };
+              return emailWithJmapId.jmapId === jmapId ? { ...e, isRead: true } : e;
+            })
+          );
+        }
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // IMAP accounts - original logic
     if (isCacheEnabled) {
       try {
         const cachedEmail = await invoke<Email | null>("get_cached_email", {
@@ -643,6 +959,66 @@ function App() {
         prev.map((e) => (e.uid === uid ? { ...e, isRead: false } : e))
       );
       if (selectedEmail?.uid === uid) {
+        setSelectedEmail(null);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // JMAP-specific handlers
+  const handleDeleteEmailJmap = async (emailId: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("jmap_delete_email", { accountId: activeAccountId, emailId });
+      setEmails((prev) => prev.filter((e) => {
+        const emailWithJmapId = e as EmailHeader & { jmapId?: string };
+        return emailWithJmapId.jmapId !== emailId;
+      }));
+      const selectedWithJmapId = selectedEmail as Email & { jmapId?: string } | null;
+      if (selectedWithJmapId?.jmapId === emailId) {
+        setSelectedEmail(null);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleToggleFlagJmap = async (emailId: string, currentlyFlagged: boolean) => {
+    if (!activeAccountId) return;
+    try {
+      if (currentlyFlagged) {
+        await invoke("jmap_unmark_flagged", { accountId: activeAccountId, emailId });
+      } else {
+        await invoke("jmap_mark_flagged", { accountId: activeAccountId, emailId });
+      }
+      setEmails((prev) =>
+        prev.map((e) => {
+          const emailWithJmapId = e as EmailHeader & { jmapId?: string };
+          return emailWithJmapId.jmapId === emailId ? { ...e, isFlagged: !currentlyFlagged } : e;
+        })
+      );
+      const selectedWithJmapId = selectedEmail as Email & { jmapId?: string } | null;
+      if (selectedWithJmapId?.jmapId === emailId) {
+        setSelectedEmail((prev) => prev ? { ...prev, isFlagged: !currentlyFlagged } : null);
+      }
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const handleMarkUnreadJmap = async (emailId: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("jmap_mark_unread", { accountId: activeAccountId, emailId });
+      setEmails((prev) =>
+        prev.map((e) => {
+          const emailWithJmapId = e as EmailHeader & { jmapId?: string };
+          return emailWithJmapId.jmapId === emailId ? { ...e, isRead: false } : e;
+        })
+      );
+      const selectedWithJmapId = selectedEmail as Email & { jmapId?: string } | null;
+      if (selectedWithJmapId?.jmapId === emailId) {
         setSelectedEmail(null);
       }
     } catch (e) {
@@ -793,9 +1169,24 @@ function App() {
     console.log("[Frontend] handleSendEmail called", email);
     setLoading(true);
     try {
-      console.log("[Frontend] Calling invoke send_email...");
-      await invoke("send_email", { accountId: activeAccountId, email });
-      console.log("[Frontend] send_email returned successfully");
+      if (isJmapAccountId(activeAccountId)) {
+        // JMAP: convert OutgoingEmail to JmapOutgoingEmail format
+        const jmapEmail = {
+          to: email.to,
+          cc: email.cc.length > 0 ? email.cc : undefined,
+          bcc: email.bcc.length > 0 ? email.bcc : undefined,
+          subject: email.subject,
+          bodyText: email.bodyText,
+          bodyHtml: email.bodyHtml,
+          inReplyTo: email.replyToMessageId,
+        };
+        console.log("[Frontend] Calling invoke jmap_send_email...");
+        await invoke("jmap_send_email", { accountId: activeAccountId, email: jmapEmail });
+      } else {
+        console.log("[Frontend] Calling invoke send_email...");
+        await invoke("send_email", { accountId: activeAccountId, email });
+      }
+      console.log("[Frontend] Email sent successfully");
       playSentSound();
       setEmailSubView("inbox");
       setReplyTo(null);
@@ -827,10 +1218,6 @@ function App() {
     }
   };
 
-  const handleAddAccount = () => {
-    // Show the add account form
-    setShowAddAccount(true);
-  };
 
   const extractEmailAddress = (from: string): string => {
     const match = from.match(/<(.+)>/);
@@ -861,50 +1248,141 @@ function App() {
     setEmailSubView("sieve");
   };
 
+  const handleCreateTaskFromEmail = async (email: EmailHeader) => {
+    // Load saved accounts for the dropdown
+    try {
+      const accounts = await invoke<SavedAccount[]>("get_saved_accounts");
+      const accountsWithPassword = accounts.filter(a => a.password);
+      setSavedAccountsForTasks(accountsWithPassword);
+
+      // Default to current account if available, otherwise first account
+      if (activeAccountSettings && accountsWithPassword.find(a => a.id === activeAccountSettings.id)) {
+        setTaskAccountId(activeAccountSettings.id);
+      } else if (accountsWithPassword.length > 0) {
+        setTaskAccountId(accountsWithPassword[0].id);
+      }
+    } catch (e) {
+      console.error("Failed to load accounts:", e);
+    }
+
+    setTaskFromEmail({
+      subject: email.subject,
+      from: email.from,
+      date: email.date,
+    });
+    setNewTaskTitle(email.subject || t("tasks.newTask"));
+    setNewTaskNotes(`${t("email.from")}: ${email.from}\n${t("email.date")}: ${email.date}`);
+    setNewTaskDueDate("");
+    setShowCreateTaskDialog(true);
+  };
+
+  const handleSaveTaskFromEmail = async () => {
+    const selectedAccount = savedAccountsForTasks.find(a => a.id === taskAccountId);
+    if (!selectedAccount || !newTaskTitle.trim()) return;
+
+    setCreatingTask(true);
+    try {
+      const task = {
+        id: crypto.randomUUID(),
+        calendarId: "personal",
+        summary: newTaskTitle.trim(),
+        description: newTaskNotes.trim() || null,
+        completed: false,
+        percentComplete: 0,
+        priority: 5, // Medium priority
+        due: newTaskDueDate || null,
+        created: new Date().toISOString(),
+        lastModified: new Date().toISOString(),
+        status: "NEEDS-ACTION",
+      };
+
+      await invoke("create_caldav_task", {
+        host: selectedAccount.imap_host,
+        username: selectedAccount.username,
+        password: selectedAccount.password || "",
+        calendarId: "personal",
+        task,
+      });
+
+      setShowCreateTaskDialog(false);
+      setTaskFromEmail(null);
+      setNewTaskTitle("");
+      setNewTaskNotes("");
+      setNewTaskDueDate("");
+      setTaskAccountId("");
+    } catch (e) {
+      showError(String(e));
+    } finally {
+      setCreatingTask(false);
+    }
+  };
+
   const getContextMenuItems = (email: EmailHeader): ContextMenuItem[] => {
+    const emailWithJmapId = email as EmailHeader & { jmapId?: string };
+    const isJmap = isJmapAccountId(activeAccountId || "");
+
     return [
       {
         label: t("contextMenu.open", "Open"),
         icon: "M",
-        onClick: () => handleSelectEmail(email.uid),
+        onClick: () => handleSelectEmail(email.uid, emailWithJmapId.jmapId),
       },
       {
         label: t("email.reply"),
         icon: "A",
         onClick: async () => {
-          const fullEmail = await invoke<Email>("fetch_email", {
-            accountId: activeAccountId,
-            folder: selectedFolder,
-            uid: email.uid,
-          });
-          handleReply(fullEmail);
+          if (isJmap && emailWithJmapId.jmapId) {
+            // For JMAP, select the email first then reply
+            await handleSelectEmail(email.uid, emailWithJmapId.jmapId);
+            if (selectedEmail) {
+              handleReply(selectedEmail);
+            }
+          } else {
+            const fullEmail = await invoke<Email>("fetch_email", {
+              accountId: activeAccountId,
+              folder: selectedFolder,
+              uid: email.uid,
+            });
+            handleReply(fullEmail);
+          }
         },
       },
       { label: "", onClick: () => {}, separator: true },
       {
         label: email.isFlagged ? t("email.unmarkFlagged") : t("email.markFlagged"),
         icon: email.isFlagged ? "☆" : "★",
-        onClick: () => handleToggleFlag(email.uid, email.isFlagged),
+        onClick: () => isJmap && emailWithJmapId.jmapId
+          ? handleToggleFlagJmap(emailWithJmapId.jmapId, email.isFlagged)
+          : handleToggleFlag(email.uid, email.isFlagged),
       },
       {
         label: email.isRead ? t("email.markUnread") : t("email.markRead"),
         icon: email.isRead ? "●" : "○",
-        onClick: () => email.isRead ? handleMarkUnread(email.uid) : handleSelectEmail(email.uid),
+        onClick: () => email.isRead
+          ? (isJmap && emailWithJmapId.jmapId ? handleMarkUnreadJmap(emailWithJmapId.jmapId) : handleMarkUnread(email.uid))
+          : handleSelectEmail(email.uid, emailWithJmapId.jmapId),
       },
       { label: "", onClick: () => {}, separator: true },
       {
         label: t("email.move"),
         icon: "O",
         onClick: () => {
-          handleSelectEmail(email.uid);
+          handleSelectEmail(email.uid, emailWithJmapId.jmapId);
         },
       },
       {
         label: t("email.delete"),
         icon: "L",
-        onClick: () => handleDeleteEmail(email.uid),
+        onClick: () => isJmap && emailWithJmapId.jmapId
+          ? handleDeleteEmailJmap(emailWithJmapId.jmapId)
+          : handleDeleteEmail(email.uid),
       },
       { label: "", onClick: () => {}, separator: true },
+      {
+        label: t("contextMenu.createTask", "Create task..."),
+        icon: "T",
+        onClick: () => handleCreateTaskFromEmail(email),
+      },
       {
         label: t("contextMenu.createRule", "Create rule..."),
         icon: "R",
@@ -1149,21 +1627,17 @@ function App() {
             <div className="flex-1 flex overflow-hidden">
               {emailSubView === "inbox" ? (
                 <>
-                  {/* Account sidebar */}
-                  <AccountSidebar
-                    accounts={connectedAccounts}
-                    activeAccountId={activeAccountId}
-                    onSelectAccount={switchAccount}
-                    onAddAccount={handleAddAccount}
-                    onRemoveAccount={handleDisconnect}
-                  />
-
-                  {/* Folder list */}
-                  <div className="w-48 bg-white border-r overflow-y-auto">
-                    <FolderList
-                      folders={folders}
+                  {/* Unified folder tree with accounts and folders */}
+                  <div className="w-64 border-r overflow-hidden">
+                    <UnifiedFolderTree
+                      accounts={connectedAccounts.map(account => ({
+                        account,
+                        folders: accountFolders[account.id] || [],
+                      }))}
+                      activeAccountId={activeAccountId}
                       selectedFolder={selectedFolder}
-                      onSelectFolder={handleSelectFolder}
+                      onSelectAccount={switchAccount}
+                      onSelectFolder={handleUnifiedFolderSelect}
                       onCreateFolder={handleCreateFolder}
                       onRenameFolder={handleRenameFolder}
                       onDeleteFolder={handleDeleteFolder}
@@ -1301,20 +1775,37 @@ function App() {
                     currentAccount={activeAccountSettings}
                   />
                 </div>
-              ) : emailSubView === "sieve" && activeAccountCredentials ? (
+              ) : emailSubView === "sieve" ? (
                 <div className="flex-1 bg-white overflow-y-auto">
-                  <SieveEditor
-                    host={activeAccountCredentials.imapHost}
-                    username={activeAccountCredentials.username}
-                    password={activeAccountCredentials.password}
-                    folders={folders}
-                    onClose={() => {
-                      setEmailSubView("inbox");
-                      setPendingRule(null);
-                    }}
-                    pendingRule={pendingRule}
-                    onPendingRuleHandled={() => setPendingRule(null)}
-                  />
+                  {activeAccountId && isJmapAccountId(activeAccountId) ? (
+                    // JMAP Sieve Editor
+                    <JmapSieveEditor
+                      accountId={activeAccountId}
+                      folders={folders}
+                      onClose={() => {
+                        setEmailSubView("inbox");
+                        setPendingRule(null);
+                      }}
+                    />
+                  ) : activeAccountCredentials ? (
+                    // IMAP Sieve Editor
+                    <SieveEditor
+                      host={activeAccountCredentials.imapHost}
+                      username={activeAccountCredentials.username}
+                      password={activeAccountCredentials.password}
+                      folders={folders}
+                      onClose={() => {
+                        setEmailSubView("inbox");
+                        setPendingRule(null);
+                      }}
+                      pendingRule={pendingRule}
+                      onPendingRuleHandled={() => setPendingRule(null)}
+                    />
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-gray-400">
+                      {t("sieve.notAvailable", "Filter not available for this account")}
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1351,7 +1842,21 @@ function App() {
         {/* Settings View (shown on top of other views) */}
         {showSettings && (
           <div className="flex-1 bg-white overflow-y-auto">
-            <AccountSettings onClose={handleCloseSettings} />
+            <AccountSettings
+              onClose={handleCloseSettings}
+              onAccountsChanged={async () => {
+                // Reload connected accounts from backend
+                try {
+                  const accounts = await invoke<ConnectedAccount[]>("get_connected_accounts");
+                  setConnectedAccounts(accounts);
+                  if (accounts.length > 0 && !activeAccountId) {
+                    setActiveAccountId(accounts[0].id);
+                  }
+                } catch (e) {
+                  console.error("Failed to reload accounts:", e);
+                }
+              }}
+            />
           </div>
         )}
       </div>
@@ -1366,32 +1871,91 @@ function App() {
         />
       )}
 
-      {/* Update Checker - checks automatically on app start */}
-      <UpdateChecker checkOnMount={true} />
-
-      {/* Add Account Modal */}
-      {showAddAccount && (
+      {/* Create Task from Email Dialog */}
+      {showCreateTaskDialog && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 relative">
-            <button
-              onClick={() => setShowAddAccount(false)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 z-10"
-            >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-            <ConnectionForm
-              onConnect={async (account, protocol) => {
-                await handleConnect(account, protocol);
-                setShowAddAccount(false);
-              }}
-              loading={loading}
-              error={error}
-            />
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="px-6 py-4 border-b">
+              <h2 className="text-lg font-semibold">{t("contextMenu.createTask")}</h2>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t("accounts.title")}
+                </label>
+                <select
+                  value={taskAccountId}
+                  onChange={(e) => setTaskAccountId(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  {savedAccountsForTasks.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.display_name} ({account.username})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t("tasks.title")}
+                </label>
+                <input
+                  type="text"
+                  value={newTaskTitle}
+                  onChange={(e) => setNewTaskTitle(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t("tasks.dueDate")}
+                </label>
+                <input
+                  type="date"
+                  value={newTaskDueDate}
+                  onChange={(e) => setNewTaskDueDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t("tasks.notes")}
+                </label>
+                <textarea
+                  value={newTaskNotes}
+                  onChange={(e) => setNewTaskNotes(e.target.value)}
+                  rows={4}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t flex justify-end gap-3">
+              <button
+                onClick={() => {
+                  setShowCreateTaskDialog(false);
+                  setTaskFromEmail(null);
+                }}
+                className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                disabled={creatingTask}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={handleSaveTaskFromEmail}
+                disabled={creatingTask || !newTaskTitle.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400"
+              >
+                {creatingTask ? t("common.loading") : t("tasks.createTask")}
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Update Checker - checks automatically on app start */}
+      <UpdateChecker checkOnMount={true} />
+
     </div>
   );
 }

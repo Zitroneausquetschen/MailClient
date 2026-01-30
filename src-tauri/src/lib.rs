@@ -118,6 +118,70 @@ async fn get_connected_accounts(state: State<'_, AppState>) -> Result<Vec<Connec
     Ok(accounts)
 }
 
+#[derive(serde::Serialize)]
+struct ProtocolStatus {
+    protocol: String,
+    connected: bool,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct AccountStatus {
+    account_id: String,
+    protocols: Vec<ProtocolStatus>,
+}
+
+#[tauri::command]
+async fn get_account_status(state: State<'_, AppState>, account_id: String) -> Result<AccountStatus, String> {
+    let mut protocols = Vec::new();
+
+    // Check if it's a JMAP account
+    if account_id.starts_with("jmap_") {
+        let jmap_clients = state.jmap_clients.lock().await;
+        let jmap_connected = jmap_clients.contains_key(&account_id);
+        protocols.push(ProtocolStatus {
+            protocol: "JMAP".to_string(),
+            connected: jmap_connected,
+            error: if jmap_connected { None } else { Some("Not connected".to_string()) },
+        });
+
+        // JMAP handles mail submission internally
+        protocols.push(ProtocolStatus {
+            protocol: "JMAP Submission".to_string(),
+            connected: jmap_connected,
+            error: if jmap_connected { None } else { Some("Not connected".to_string()) },
+        });
+    } else {
+        // IMAP account - check IMAP connection
+        let imap_clients = state.imap_clients.lock().await;
+        let imap_connected = imap_clients.contains_key(&account_id);
+        protocols.push(ProtocolStatus {
+            protocol: "IMAP".to_string(),
+            connected: imap_connected,
+            error: if imap_connected { None } else { Some("Not connected".to_string()) },
+        });
+
+        // SMTP connects on-demand when sending mail
+        protocols.push(ProtocolStatus {
+            protocol: "SMTP".to_string(),
+            connected: true, // SMTP is stateless, connects per send
+            error: None,
+        });
+
+        // Sieve connects on-demand when managing filters
+        protocols.push(ProtocolStatus {
+            protocol: "Sieve".to_string(),
+            connected: true, // Sieve is stateless, connects per operation
+            error: None,
+        });
+    }
+
+    Ok(AccountStatus {
+        account_id,
+        protocols,
+    })
+}
+
 #[tauri::command]
 async fn list_folders(state: State<'_, AppState>, account_id: String) -> Result<Vec<Folder>, String> {
     let clients = state.imap_clients.lock().await;
@@ -422,6 +486,11 @@ async fn send_email(state: State<'_, AppState>, account_id: String, email: Outgo
 #[tauri::command]
 async fn lookup_autoconfig(email: String) -> Result<AutoConfigResult, String> {
     autoconfig::lookup_autoconfig(&email).await
+}
+
+#[tauri::command]
+async fn lookup_jmap_url(email: String) -> Result<autoconfig::JmapDiscoveryResult, String> {
+    autoconfig::lookup_jmap_url(&email).await
 }
 
 #[tauri::command]
@@ -764,9 +833,98 @@ pub struct JmapConnectedAccount {
     pub protocol: String,
 }
 
+// Debug command to test JMAP connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapDebugInfo {
+    pub original_url: String,
+    pub final_url: String,
+    pub api_url: String,
+    pub status: String,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+async fn debug_jmap_connection(jmap_url: String, username: String, password: String) -> Result<JmapDebugInfo, String> {
+    let base_url = jmap_url
+        .trim_end_matches('/')
+        .trim_end_matches("/.well-known/jmap")
+        .trim_end_matches(".well-known/jmap")
+        .to_string();
+
+    let http_client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let well_known_url = format!("{}/.well-known/jmap", base_url);
+
+    let response = match http_client
+        .get(&well_known_url)
+        .basic_auth(&username, Some(&password))
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(JmapDebugInfo {
+                original_url: well_known_url,
+                final_url: "N/A".to_string(),
+                api_url: "N/A".to_string(),
+                status: "Request failed".to_string(),
+                error: Some(format!("{}", e)),
+            });
+        }
+    };
+
+    let status = response.status().to_string();
+    let final_url = response.url().to_string();
+
+    if !response.status().is_success() {
+        return Ok(JmapDebugInfo {
+            original_url: well_known_url,
+            final_url,
+            api_url: "N/A".to_string(),
+            status,
+            error: Some("Server returned error status".to_string()),
+        });
+    }
+
+    let json: serde_json::Value = match response.json().await {
+        Ok(j) => j,
+        Err(e) => {
+            return Ok(JmapDebugInfo {
+                original_url: well_known_url,
+                final_url,
+                api_url: "N/A".to_string(),
+                status,
+                error: Some(format!("Failed to parse JSON: {}", e)),
+            });
+        }
+    };
+
+    let api_url = json
+        .get("apiUrl")
+        .and_then(|v| v.as_str())
+        .unwrap_or("N/A")
+        .to_string();
+
+    Ok(JmapDebugInfo {
+        original_url: well_known_url,
+        final_url,
+        api_url,
+        status,
+        error: None,
+    })
+}
+
 #[tauri::command]
 async fn jmap_connect(state: State<'_, AppState>, account: JmapAccount) -> Result<JmapConnectedAccount, String> {
-    let account_id = account.username.clone();
+    // Use jmap_ prefix to match the saved account ID format
+    let account_id = format!("jmap_{}", account.username);
     let display_name = account.display_name.clone();
     let email = account.username.clone();
 
@@ -1036,6 +1194,71 @@ async fn jmap_bulk_move(
     client.bulk_move(&ids, &target_mailbox_id).await
 }
 
+// JMAP Sieve commands
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapSieveScriptInfo {
+    pub id: String,
+    pub name: String,
+    pub is_active: bool,
+    pub blob_id: Option<String>,
+}
+
+#[tauri::command]
+async fn jmap_list_sieve_scripts(state: State<'_, AppState>, account_id: String) -> Result<Vec<JmapSieveScriptInfo>, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    let scripts = client.list_sieve_scripts().await?;
+    Ok(scripts.into_iter().map(|s| JmapSieveScriptInfo {
+        id: s.id,
+        name: s.name,
+        is_active: s.is_active,
+        blob_id: s.blob_id,
+    }).collect())
+}
+
+#[tauri::command]
+async fn jmap_get_sieve_script(state: State<'_, AppState>, account_id: String, blob_id: String) -> Result<String, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.get_sieve_script_content(&blob_id).await
+}
+
+#[tauri::command]
+async fn jmap_set_sieve_script(
+    state: State<'_, AppState>,
+    account_id: String,
+    id: Option<String>,
+    name: String,
+    content: String,
+    is_active: bool,
+) -> Result<String, String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.set_sieve_script(id.as_deref(), &name, &content, is_active).await
+}
+
+#[tauri::command]
+async fn jmap_delete_sieve_script(state: State<'_, AppState>, account_id: String, script_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.delete_sieve_script(&script_id).await
+}
+
+#[tauri::command]
+async fn jmap_activate_sieve_script(state: State<'_, AppState>, account_id: String, script_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.activate_sieve_script(&script_id).await
+}
+
+#[tauri::command]
+async fn jmap_deactivate_sieve_scripts(state: State<'_, AppState>, account_id: String) -> Result<(), String> {
+    let clients = state.jmap_clients.lock().await;
+    let client = clients.get(&account_id).ok_or("JMAP account not connected")?;
+    client.deactivate_sieve_scripts().await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1048,6 +1271,7 @@ pub fn run() {
             disconnect,
             disconnect_all,
             get_connected_accounts,
+            get_account_status,
             list_folders,
             select_folder,
             fetch_headers,
@@ -1075,6 +1299,7 @@ pub fn run() {
             bulk_move,
             send_email,
             lookup_autoconfig,
+            lookup_jmap_url,
             get_saved_accounts,
             save_account,
             delete_saved_account,
@@ -1119,6 +1344,7 @@ pub fn run() {
             update_caldav_task,
             delete_caldav_task,
             // JMAP commands
+            debug_jmap_connection,
             jmap_connect,
             jmap_disconnect,
             jmap_list_mailboxes,
@@ -1141,6 +1367,13 @@ pub fn run() {
             jmap_bulk_mark_flagged,
             jmap_bulk_delete,
             jmap_bulk_move,
+            // JMAP Sieve commands
+            jmap_list_sieve_scripts,
+            jmap_get_sieve_script,
+            jmap_set_sieve_script,
+            jmap_delete_sieve_script,
+            jmap_activate_sieve_script,
+            jmap_deactivate_sieve_scripts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

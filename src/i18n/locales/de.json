@@ -13,6 +13,7 @@
   },
   "email": {
     "inbox": "Posteingang",
+    "allInboxes": "Alle Posteingänge",
     "compose": "Verfassen",
     "reply": "Antworten",
     "replyAll": "Allen antworten",
@@ -67,10 +68,12 @@
   "folders": {
     "title": "Ordner",
     "create": "Ordner erstellen",
+    "createSubfolder": "Unterordner erstellen",
+    "parentFolder": "Übergeordneter Ordner",
     "rename": "Umbenennen",
     "delete": "Löschen",
     "newFolderName": "Neuer Ordnername",
-    "confirmDelete": "Ordner wirklich löschen?",
+    "confirmDelete": "Ordner \"{{name}}\" wirklich löschen?",
     "createSuccess": "Ordner erstellt",
     "renameSuccess": "Ordner umbenannt",
     "deleteSuccess": "Ordner gelöscht"
@@ -116,7 +119,12 @@
     "imapDescription": "Traditionelles E-Mail-Protokoll (die meisten Server)",
     "jmapDescription": "Modernes JSON-basiertes Protokoll (Stalwart, Fastmail)",
     "jmapUrl": "JMAP Server URL",
-    "jmapUrlHint": "Normalerweise: https://ihr-server/.well-known/jmap"
+    "jmapUrlHint": "Normalerweise: https://ihr-server/.well-known/jmap",
+    "deleteConfirm": "Möchten Sie dieses Konto wirklich löschen? Alle gespeicherten Daten werden entfernt.",
+    "connected": "Verbunden",
+    "lookingForJmap": "Suche JMAP Server...",
+    "status": "Status anzeigen",
+    "connectionStatus": "Verbindungsstatus"
   },
   "settings": {
     "title": "Einstellungen",
@@ -221,7 +229,7 @@
     "saving": "Speichern..."
   },
   "tasks": {
-    "title": "Aufgaben",
+    "title": "Titel",
     "add": "Aufgabe hinzufügen",
     "edit": "Bearbeiten",
     "delete": "Löschen",
@@ -240,7 +248,10 @@
     "complete": "Erledigt",
     "save": "Speichern",
     "cancel": "Abbrechen",
-    "confirmDelete": "Aufgabe wirklich löschen?"
+    "confirmDelete": "Aufgabe wirklich löschen?",
+    "createTask": "Aufgabe erstellen",
+    "newTask": "Neue Aufgabe",
+    "notes": "Notizen"
   },
   "notes": {
     "title": "Notizen",
@@ -349,6 +360,7 @@
   },
   "contextMenu": {
     "open": "Öffnen",
+    "createTask": "Aufgabe erstellen...",
     "createRule": "Regel erstellen..."
   },
   "common": {

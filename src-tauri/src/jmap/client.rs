@@ -7,6 +7,19 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use chrono::{Utc, TimeZone};
 
+/// JMAP Session response structure
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JmapSession {
+    api_url: String,
+    download_url: Option<String>,
+    upload_url: Option<String>,
+    #[serde(default)]
+    capabilities: serde_json::Value,
+    #[serde(default)]
+    accounts: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JmapAccount {
@@ -93,9 +106,22 @@ pub struct JmapOutgoingEmail {
     pub references: Option<String>,
 }
 
+/// JMAP Sieve Script
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JmapSieveScript {
+    pub id: String,
+    pub name: String,
+    pub is_active: bool,
+    #[serde(default)]
+    pub blob_id: Option<String>,
+}
+
 pub struct JmapClient {
     client: Option<Arc<Client>>,
     account: Option<JmapAccount>,
+    api_url: Option<String>,
+    account_id: Option<String>,
 }
 
 impl JmapClient {
@@ -103,19 +129,148 @@ impl JmapClient {
         Self {
             client: None,
             account: None,
+            api_url: None,
+            account_id: None,
         }
     }
 
     pub async fn connect(&mut self, account: JmapAccount) -> Result<(), String> {
+        // Strip .well-known/jmap from URL if present
+        let base_url = account.jmap_url
+            .trim_end_matches('/')
+            .trim_end_matches("/.well-known/jmap")
+            .trim_end_matches(".well-known/jmap")
+            .to_string();
+
+        // Create HTTP client that follows redirects
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .redirect(reqwest::redirect::Policy::limited(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        // Manually fetch the .well-known/jmap endpoint to get the session
+        // This follows all redirects automatically
+        let well_known_url = format!("{}/.well-known/jmap", base_url);
+        let response = http_client
+            .get(&well_known_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch JMAP session: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("JMAP server returned error: {}", response.status()));
+        }
+
+        // Get the final URL after redirects - this is where the session was actually served from
+        let final_url = response.url().clone();
+
+        // Parse the session response as JSON Value first
+        let session_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse JMAP session: {}", e))?;
+
+        // Extract session data
+        let session = JmapSession {
+            api_url: session_json.get("apiUrl")
+                .and_then(|v| v.as_str())
+                .ok_or("Missing apiUrl in session")?
+                .to_string(),
+            download_url: session_json.get("downloadUrl").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            upload_url: session_json.get("uploadUrl").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            capabilities: session_json.get("capabilities").cloned().unwrap_or(serde_json::Value::Null),
+            accounts: session_json.get("accounts").cloned().unwrap_or(serde_json::Value::Null),
+        };
+
+        // Resolve the API URL - it might be relative
+        let api_url = if session.api_url.starts_with("http://") || session.api_url.starts_with("https://") {
+            session.api_url.clone()
+        } else if session.api_url.starts_with('/') {
+            // Absolute path - combine with final URL's origin
+            format!("{}://{}{}",
+                final_url.scheme(),
+                final_url.host_str().unwrap_or(""),
+                session.api_url
+            )
+        } else {
+            // Relative path
+            format!("{}/{}", final_url.as_str().trim_end_matches('/'), session.api_url)
+        };
+
+        // Collect trusted hosts for redirects
+        let mut trusted_hosts: Vec<String> = Vec::new();
+
+        // Add original host
+        if let Ok(orig_url) = reqwest::Url::parse(&base_url) {
+            if let Some(host) = orig_url.host_str() {
+                trusted_hosts.push(host.to_string());
+            }
+        }
+
+        // Add final URL host (after redirects)
+        if let Some(host) = final_url.host_str() {
+            if !trusted_hosts.contains(&host.to_string()) {
+                trusted_hosts.push(host.to_string());
+            }
+        }
+
+        // Add API URL host if different
+        if let Ok(api_parsed) = reqwest::Url::parse(&api_url) {
+            if let Some(host) = api_parsed.host_str() {
+                if !trusted_hosts.contains(&host.to_string()) {
+                    trusted_hosts.push(host.to_string());
+                }
+            }
+        }
+
+        // Extract base URL from the API URL for jmap-client
+        let connect_base = if let Ok(url) = reqwest::Url::parse(&api_url) {
+            let mut base = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+            if let Some(port) = url.port() {
+                base = format!("{}:{}", base, port);
+            }
+            base
+        } else {
+            // Fallback: use base from final URL
+            let mut base = format!("{}://{}", final_url.scheme(), final_url.host_str().unwrap_or(""));
+            if let Some(port) = final_url.port() {
+                base = format!("{}:{}", base, port);
+            }
+            base
+        };
+
+        // Try to connect using the resolved base URL with trusted redirect hosts
         let client = Client::new()
             .credentials(Credentials::basic(&account.username, &account.password))
             .accept_invalid_certs(true)
-            .connect(&account.jmap_url)
+            .follow_redirects(trusted_hosts)
+            .timeout(std::time::Duration::from_secs(30))
+            .connect(&connect_base)
             .await
-            .map_err(|e| format!("JMAP connection failed: {}", e))?;
+            .map_err(|e| format!("JMAP connection failed: {} (tried connecting to {})", e, connect_base))?;
+
+        // Extract primary account ID from session
+        let primary_account_id = session_json
+            .get("primaryAccounts")
+            .and_then(|pa| pa.get("urn:ietf:params:jmap:mail"))
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                // Fallback: get first account from accounts object
+                session_json.get("accounts")
+                    .and_then(|accts| accts.as_object())
+                    .and_then(|obj| obj.keys().next())
+                    .map(|s| s.as_str())
+            })
+            .map(|s| s.to_string());
 
         self.client = Some(Arc::new(client));
         self.account = Some(account);
+        self.api_url = Some(api_url);
+        self.account_id = primary_account_id;
 
         Ok(())
     }
@@ -123,6 +278,8 @@ impl JmapClient {
     pub async fn disconnect(&mut self) -> Result<(), String> {
         self.client = None;
         self.account = None;
+        self.api_url = None;
+        self.account_id = None;
         Ok(())
     }
 
@@ -813,6 +970,358 @@ impl JmapClient {
         }
 
         Ok(result)
+    }
+
+    // JMAP Sieve methods
+
+    /// List all Sieve scripts
+    pub async fn list_sieve_scripts(&self) -> Result<Vec<JmapSieveScript>, String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let request_body = serde_json::json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"],
+            "methodCalls": [
+                ["SieveScript/get", {
+                    "accountId": account_id,
+                    "ids": null
+                }, "0"]
+            ]
+        });
+
+        let response = http_client
+            .post(api_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch Sieve scripts: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        let response_json: serde_json::Value = response.json().await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // Extract scripts from response
+        let scripts = response_json
+            .get("methodResponses")
+            .and_then(|mr| mr.get(0))
+            .and_then(|r| r.get(1))
+            .and_then(|data| data.get("list"))
+            .and_then(|list| list.as_array())
+            .ok_or("Invalid response format")?;
+
+        let mut result = Vec::new();
+        for script in scripts {
+            result.push(JmapSieveScript {
+                id: script.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                name: script.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                is_active: script.get("isActive").and_then(|v| v.as_bool()).unwrap_or(false),
+                blob_id: script.get("blobId").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Get the content of a Sieve script
+    pub async fn get_sieve_script_content(&self, blob_id: &str) -> Result<String, String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        // JMAP uses downloadUrl template for blob downloads
+        // The template typically looks like: https://server/jmap/download/{accountId}/{blobId}/{name}
+        // We need to get it from the session, but for now we'll construct a reasonable URL
+        let download_url = api_url.replace("/jmap", &format!("/jmap/download/{}/{}/script.sieve", account_id, blob_id));
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let response = http_client
+            .get(&download_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download script: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        response.text().await.map_err(|e| format!("Failed to read script content: {}", e))
+    }
+
+    /// Create or update a Sieve script
+    pub async fn set_sieve_script(&self, id: Option<&str>, name: &str, content: &str, is_active: bool) -> Result<String, String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        // First, upload the blob
+        let upload_url = api_url.replace("/jmap", &format!("/jmap/upload/{}", account_id));
+
+        let upload_response = http_client
+            .post(&upload_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/sieve")
+            .body(content.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("Failed to upload script: {}", e))?;
+
+        if !upload_response.status().is_success() {
+            return Err(format!("Upload failed: {}", upload_response.status()));
+        }
+
+        let upload_result: serde_json::Value = upload_response.json().await
+            .map_err(|e| format!("Failed to parse upload response: {}", e))?;
+
+        let blob_id = upload_result.get("blobId")
+            .and_then(|v| v.as_str())
+            .ok_or("No blobId in upload response")?;
+
+        // Then create/update the script
+        let method_calls = if let Some(script_id) = id {
+            // Update existing script
+            serde_json::json!([
+                ["SieveScript/set", {
+                    "accountId": account_id,
+                    "update": {
+                        script_id: {
+                            "name": name,
+                            "blobId": blob_id
+                        }
+                    },
+                    "onSuccessActivateScript": if is_active { Some(script_id) } else { None::<&str> }
+                }, "0"]
+            ])
+        } else {
+            // Create new script
+            serde_json::json!([
+                ["SieveScript/set", {
+                    "accountId": account_id,
+                    "create": {
+                        "new": {
+                            "name": name,
+                            "blobId": blob_id
+                        }
+                    },
+                    "onSuccessActivateScript": if is_active { Some("#new") } else { None::<&str> }
+                }, "0"]
+            ])
+        };
+
+        let request_body = serde_json::json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"],
+            "methodCalls": method_calls
+        });
+
+        let response = http_client
+            .post(api_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to set script: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        let response_json: serde_json::Value = response.json().await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // Check for errors
+        if let Some(error) = response_json.get("methodResponses")
+            .and_then(|mr| mr.get(0))
+            .and_then(|r| r.get(1))
+            .and_then(|data| data.get("notCreated").or(data.get("notUpdated")))
+            .and_then(|errors| errors.as_object())
+            .and_then(|obj| obj.values().next())
+        {
+            return Err(format!("Script error: {:?}", error));
+        }
+
+        // Return the script ID (either the existing one or the newly created one)
+        if let Some(script_id) = id {
+            Ok(script_id.to_string())
+        } else {
+            response_json.get("methodResponses")
+                .and_then(|mr| mr.get(0))
+                .and_then(|r| r.get(1))
+                .and_then(|data| data.get("created"))
+                .and_then(|created| created.get("new"))
+                .and_then(|new| new.get("id"))
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| "Failed to get new script ID".to_string())
+        }
+    }
+
+    /// Delete a Sieve script
+    pub async fn delete_sieve_script(&self, script_id: &str) -> Result<(), String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let request_body = serde_json::json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"],
+            "methodCalls": [
+                ["SieveScript/set", {
+                    "accountId": account_id,
+                    "destroy": [script_id]
+                }, "0"]
+            ]
+        });
+
+        let response = http_client
+            .post(api_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to delete script: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        // Parse response to check for JMAP-level errors
+        let response_body: serde_json::Value = response.json().await
+            .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+        // Check for method-level errors
+        if let Some(method_responses) = response_body.get("methodResponses").and_then(|v| v.as_array()) {
+            for method_response in method_responses {
+                if let Some(arr) = method_response.as_array() {
+                    let method_name = arr.get(0).and_then(|v| v.as_str()).unwrap_or("");
+                    let result = arr.get(1);
+
+                    if method_name == "error" {
+                        let error_type = result.and_then(|r| r.get("type")).and_then(|t| t.as_str()).unwrap_or("unknown");
+                        let description = result.and_then(|r| r.get("description")).and_then(|d| d.as_str()).unwrap_or("");
+                        return Err(format!("JMAP error: {} - {}", error_type, description));
+                    }
+
+                    if method_name == "SieveScript/set" {
+                        // Check if script was not destroyed
+                        if let Some(not_destroyed) = result.and_then(|r| r.get("notDestroyed")) {
+                            if let Some(error_obj) = not_destroyed.get(script_id) {
+                                let error_type = error_obj.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                                let description = error_obj.get("description").and_then(|d| d.as_str()).unwrap_or("");
+                                return Err(format!("Failed to delete script: {} - {}", error_type, description));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Activate a Sieve script
+    pub async fn activate_sieve_script(&self, script_id: &str) -> Result<(), String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let request_body = serde_json::json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"],
+            "methodCalls": [
+                ["SieveScript/set", {
+                    "accountId": account_id,
+                    "onSuccessActivateScript": script_id
+                }, "0"]
+            ]
+        });
+
+        let response = http_client
+            .post(api_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to activate script: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        Ok(())
+    }
+
+    /// Deactivate all Sieve scripts (set none as active)
+    pub async fn deactivate_sieve_scripts(&self) -> Result<(), String> {
+        let account = self.account.as_ref().ok_or("Not connected")?;
+        let api_url = self.api_url.as_ref().ok_or("API URL not available")?;
+        let account_id = self.account_id.as_ref().ok_or("Account ID not available")?;
+
+        let http_client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        let request_body = serde_json::json!({
+            "using": ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"],
+            "methodCalls": [
+                ["SieveScript/set", {
+                    "accountId": account_id,
+                    "onSuccessActivateScript": serde_json::Value::Null
+                }, "0"]
+            ]
+        });
+
+        let response = http_client
+            .post(api_url)
+            .basic_auth(&account.username, Some(&account.password))
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to deactivate scripts: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(format!("Server returned error: {}", response.status()));
+        }
+
+        Ok(())
     }
 }
 

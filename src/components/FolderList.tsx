@@ -2,6 +2,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Folder } from "../types/mail";
 
+// Extended Folder type with JMAP fields
+type ExtendedFolder = Folder & {
+  displayName?: string;
+  role?: string | null;
+};
+
 interface Props {
   folders: Folder[];
   selectedFolder: string;
@@ -14,11 +20,28 @@ interface Props {
 // Map folder names to icons and translation keys
 const folderMeta: Record<string, { icon: string; labelKey: string }> = {
   INBOX: { icon: "📥", labelKey: "email.inbox" },
+  Inbox: { icon: "📥", labelKey: "email.inbox" },
   Sent: { icon: "📤", labelKey: "email.sent" },
   Drafts: { icon: "📝", labelKey: "email.draft" },
   Trash: { icon: "🗑️", labelKey: "email.trash" },
   Junk: { icon: "⚠️", labelKey: "email.spam" },
   Spam: { icon: "⚠️", labelKey: "email.spam" },
+  Archive: { icon: "📦", labelKey: "email.archive" },
+};
+
+// Map JMAP roles to icons
+const jmapRoleMeta: Record<string, { icon: string; labelKey: string }> = {
+  inbox: { icon: "📥", labelKey: "email.inbox" },
+  Inbox: { icon: "📥", labelKey: "email.inbox" },
+  sent: { icon: "📤", labelKey: "email.sent" },
+  Sent: { icon: "📤", labelKey: "email.sent" },
+  drafts: { icon: "📝", labelKey: "email.draft" },
+  Drafts: { icon: "📝", labelKey: "email.draft" },
+  trash: { icon: "🗑️", labelKey: "email.trash" },
+  Trash: { icon: "🗑️", labelKey: "email.trash" },
+  junk: { icon: "⚠️", labelKey: "email.spam" },
+  Junk: { icon: "⚠️", labelKey: "email.spam" },
+  archive: { icon: "📦", labelKey: "email.archive" },
   Archive: { icon: "📦", labelKey: "email.archive" },
 };
 
@@ -72,8 +95,16 @@ function FolderList({ folders, selectedFolder, onSelectFolder, onCreateFolder, o
     }
   };
 
-  const getFolderMeta = (name: string) => {
-    // Check for exact match first
+  const getFolderMeta = (folder: ExtendedFolder) => {
+    const name = folder.displayName || folder.name;
+    const role = folder.role;
+
+    // Check JMAP role first
+    if (role && jmapRoleMeta[role]) {
+      return { icon: jmapRoleMeta[role].icon, label: t(jmapRoleMeta[role].labelKey) };
+    }
+
+    // Check for exact match by name
     if (folderMeta[name]) {
       return { icon: folderMeta[name].icon, label: t(folderMeta[name].labelKey) };
     }
@@ -81,19 +112,28 @@ function FolderList({ folders, selectedFolder, onSelectFolder, onCreateFolder, o
     // Check for common folder name patterns
     const lowerName = name.toLowerCase();
     if (lowerName.includes("sent")) return { icon: "📤", label: name };
-    if (lowerName.includes("draft")) return { icon: "📝", label: name };
-    if (lowerName.includes("trash") || lowerName.includes("deleted")) return { icon: "🗑️", label: name };
+    if (lowerName.includes("draft") || lowerName.includes("entwurf")) return { icon: "📝", label: name };
+    if (lowerName.includes("trash") || lowerName.includes("deleted") || lowerName.includes("papierkorb")) return { icon: "🗑️", label: name };
     if (lowerName.includes("junk") || lowerName.includes("spam")) return { icon: "⚠️", label: name };
-    if (lowerName.includes("archive")) return { icon: "📦", label: name };
+    if (lowerName.includes("archive") || lowerName.includes("archiv")) return { icon: "📦", label: name };
+    if (lowerName.includes("inbox") || lowerName.includes("posteingang")) return { icon: "📥", label: name };
 
     return { icon: "📁", label: name };
   };
 
   // Sort folders: INBOX first, then alphabetically
   const sortedFolders = [...folders].sort((a, b) => {
-    if (a.name === "INBOX") return -1;
-    if (b.name === "INBOX") return 1;
-    return a.name.localeCompare(b.name);
+    const extA = a as ExtendedFolder;
+    const extB = b as ExtendedFolder;
+
+    // JMAP: check role for inbox
+    if (extA.role === "Inbox" || extA.role === "inbox" || a.name === "INBOX") return -1;
+    if (extB.role === "Inbox" || extB.role === "inbox" || b.name === "INBOX") return 1;
+
+    // Use display name for sorting if available
+    const nameA = extA.displayName || a.name;
+    const nameB = extB.displayName || b.name;
+    return nameA.localeCompare(nameB);
   });
 
   return (
@@ -114,7 +154,8 @@ function FolderList({ folders, selectedFolder, onSelectFolder, onCreateFolder, o
       </div>
       <ul>
         {sortedFolders.map((folder) => {
-          const meta = getFolderMeta(folder.name);
+          const extFolder = folder as ExtendedFolder;
+          const meta = getFolderMeta(extFolder);
           const isSelected = folder.name === selectedFolder;
 
           return (

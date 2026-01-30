@@ -1,10 +1,16 @@
 import { useTranslation } from "react-i18next";
 import { EmailHeader } from "../types/mail";
 
+// Extended EmailHeader with optional JMAP fields
+type ExtendedEmailHeader = EmailHeader & {
+  jmapId?: string;
+  preview?: string;
+};
+
 interface Props {
   emails: EmailHeader[];
   selectedUid?: number;
-  onSelectEmail: (uid: number) => void;
+  onSelectEmail: (uid: number, jmapId?: string) => void;
   onContextMenu?: (email: EmailHeader, x: number, y: number) => void;
   onToggleFlag?: (uid: number, currentlyFlagged: boolean) => void;
   loading: boolean;
@@ -100,6 +106,8 @@ function EmailList({
   };
 
   const handleClick = (e: React.MouseEvent, email: EmailHeader) => {
+    const extendedEmail = email as ExtendedEmailHeader;
+
     if (multiSelectMode && onSelectionChange && selectedUids) {
       // In multi-select mode, toggle selection
       const newSelection = new Set(selectedUids);
@@ -131,7 +139,8 @@ function EmailList({
         onSelectionChange(newSelection);
       }
     } else {
-      onSelectEmail(email.uid);
+      // Pass jmapId for JMAP accounts
+      onSelectEmail(email.uid, extendedEmail.jmapId);
     }
   };
 
@@ -158,9 +167,13 @@ function EmailList({
 
   return (
     <div className="divide-y">
-      {emails.map((email) => (
+      {emails.map((email) => {
+        const extendedEmail = email as ExtendedEmailHeader;
+        const emailKey = extendedEmail.jmapId || email.uid.toString();
+
+        return (
         <div
-          key={email.uid}
+          key={emailKey}
           onClick={(e) => handleClick(e, email)}
           onContextMenu={(e) => handleContextMenu(e, email)}
           className={`w-full p-3 text-left email-item cursor-pointer ${
@@ -214,7 +227,8 @@ function EmailList({
             )}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

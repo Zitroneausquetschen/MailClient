@@ -65,51 +65,11 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
+    // Just call onConnect - the parent component handles saving
     if (protocol === "imap") {
       await onConnect(imapFormData, "imap");
-
-      // After successful connection, offer to save
-      if (!error) {
-        try {
-          const accountId = imapFormData.username;
-          const savedAccount: SavedAccount = {
-            id: accountId,
-            display_name: imapFormData.displayName,
-            username: imapFormData.username,
-            imap_host: imapFormData.imapHost,
-            imap_port: imapFormData.imapPort,
-            smtp_host: imapFormData.smtpHost,
-            smtp_port: imapFormData.smtpPort,
-            password: savePassword ? imapFormData.password : undefined,
-          };
-          await invoke("save_account", { account: savedAccount });
-          await loadSavedAccounts();
-        } catch (e) {
-          console.error("Failed to save account:", e);
-        }
-      }
     } else {
       await onConnect(jmapFormData, "jmap");
-
-      // After successful connection, save JMAP account
-      if (!error) {
-        try {
-          const accountId = `jmap_${jmapFormData.username}`;
-          const savedAccount: SavedJmapAccount = {
-            id: accountId,
-            displayName: jmapFormData.displayName,
-            username: jmapFormData.username,
-            jmapUrl: jmapFormData.jmapUrl,
-            password: savePassword ? jmapFormData.password : undefined,
-            protocol: "jmap",
-          };
-          await invoke("save_jmap_account", { account: savedAccount });
-          await loadSavedAccounts();
-        } catch (e) {
-          console.error("Failed to save JMAP account:", e);
-        }
-      }
     }
   };
 
@@ -121,7 +81,7 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
     setJmapFormData((prev) => ({ ...prev, [field]: value }));
   };
 
-  // Lookup autoconfig when email is entered (only for IMAP)
+  // Lookup autoconfig when email is entered
   const handleEmailChange = async (email: string) => {
     if (protocol === "imap") {
       handleImapChange("username", email);
@@ -158,6 +118,32 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
       }
     } else {
       handleJmapChange("username", email);
+
+      // Trigger JMAP discovery if email looks valid
+      if (email.includes("@") && email.split("@")[1]?.includes(".")) {
+        setAutoConfigLoading(true);
+        setAutoConfigStatus(t("accounts.lookingForJmap", "Looking for JMAP server..."));
+
+        try {
+          const result = await invoke<{ jmap_url: string | null }>("lookup_jmap_url", { email });
+
+          if (result.jmap_url) {
+            setJmapFormData((prev) => ({
+              ...prev,
+              jmapUrl: result.jmap_url || prev.jmapUrl,
+            }));
+            setAutoConfigStatus(t("accounts.settingsFound"));
+          } else {
+            setAutoConfigStatus(t("accounts.usingDefaults"));
+          }
+        } catch (e) {
+          setAutoConfigStatus(t("accounts.autoConfigFailed"));
+          console.error("JMAP discovery failed:", e);
+        } finally {
+          setAutoConfigLoading(false);
+          setTimeout(() => setAutoConfigStatus(""), 3000);
+        }
+      }
     }
   };
 
@@ -360,7 +346,7 @@ function ConnectionForm({ onConnect, loading, error }: Props) {
             placeholder="mail@example.com"
             required
           />
-          {protocol === "imap" && autoConfigStatus && (
+          {autoConfigStatus && (
             <p className={`text-xs mt-1 ${autoConfigLoading ? "text-blue-600" : autoConfigStatus === t("accounts.settingsFound") ? "text-green-600" : "text-gray-500"}`}>
               {autoConfigLoading && (
                 <span className="inline-block animate-spin mr-1">⟳</span>

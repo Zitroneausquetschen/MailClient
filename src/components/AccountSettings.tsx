@@ -1,23 +1,39 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { SavedAccount, CacheStats, EmailSignature, VacationSettings as VacationSettingsType } from "../types/mail";
+import { getVersion } from "@tauri-apps/api/app";
+import { SavedAccount, SavedJmapAccount, CacheStats, EmailSignature, VacationSettings as VacationSettingsType, MailAccount, JmapAccount, ConnectedAccount, JmapConnectedAccount } from "../types/mail";
 import SignatureManager from "./SignatureManager";
 import VacationSettings from "./VacationSettings";
+import ConnectionForm from "./ConnectionForm";
 import { UpdateCheckResult } from "./UpdateChecker";
 import { check, Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
+interface ProtocolStatus {
+  protocol: string;
+  connected: boolean;
+  error: string | null;
+}
+
+interface AccountStatus {
+  account_id: string;
+  protocols: ProtocolStatus[];
+}
+
 interface Props {
   onClose: () => void;
+  onAccountsChanged?: () => void;  // Callback when accounts are added/removed
 }
 
 type SettingsTab = "general" | "signatures" | "vacation" | "app";
 
-function AccountSettings({ onClose }: Props) {
+function AccountSettings({ onClose, onAccountsChanged }: Props) {
   const { t, i18n } = useTranslation();
   const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+  const [jmapAccounts, setJmapAccounts] = useState<SavedJmapAccount[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedAccountType, setSelectedAccountType] = useState<"imap" | "jmap">("imap");
   const [formData, setFormData] = useState<SavedAccount | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -29,9 +45,24 @@ function AccountSettings({ onClose }: Props) {
   const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null);
   const [installingUpdate, setInstallingUpdate] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
+  // Add account form state
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [addAccountError, setAddAccountError] = useState<string | null>(null);
+  // Delete account state
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // App version
+  const [appVersion, setAppVersion] = useState("0.0.0");
+  // Account status popup
+  const [statusPopup, setStatusPopup] = useState<{ accountId: string; x: number; y: number } | null>(null);
+  const [accountStatus, setAccountStatus] = useState<AccountStatus | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(false);
 
   useEffect(() => {
     loadAccounts();
+    // Load app version
+    getVersion().then(setAppVersion).catch(() => setAppVersion("0.3.2"));
   }, []);
 
   const loadAccounts = async () => {
@@ -39,9 +70,22 @@ function AccountSettings({ onClose }: Props) {
       const savedAccounts = await invoke<SavedAccount[]>("get_saved_accounts");
       setAccounts(savedAccounts);
 
+      // Also load JMAP accounts
+      let savedJmapAccounts: SavedJmapAccount[] = [];
+      try {
+        savedJmapAccounts = await invoke<SavedJmapAccount[]>("get_saved_jmap_accounts");
+        setJmapAccounts(savedJmapAccounts);
+      } catch {
+        // JMAP accounts might not exist yet
+      }
+
       // Auto-select first account if available
       if (savedAccounts.length > 0 && !selectedAccountId) {
         selectAccount(savedAccounts[0].id, savedAccounts);
+      } else if (savedJmapAccounts.length > 0 && !selectedAccountId) {
+        // Select first JMAP account if no IMAP accounts
+        setSelectedAccountId(savedJmapAccounts[0].id);
+        setSelectedAccountType("jmap");
       }
     } catch (e) {
       setMessage({ type: "error", text: `${t("errors.loadFailed")}: ${e}` });
@@ -74,6 +118,22 @@ function AccountSettings({ onClose }: Props) {
     } catch (e) {
       console.error("Failed to load cache stats:", e);
       setCacheStats(null);
+    }
+  };
+
+  const handleStatusClick = async (e: React.MouseEvent, accountId: string) => {
+    e.stopPropagation();
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setStatusPopup({ accountId, x: rect.right + 10, y: rect.top });
+    setLoadingStatus(true);
+    setAccountStatus(null);
+    try {
+      const status = await invoke<AccountStatus>("get_account_status", { accountId });
+      setAccountStatus(status);
+    } catch (err) {
+      console.error("Failed to get account status:", err);
+    } finally {
+      setLoadingStatus(false);
     }
   };
 
@@ -155,6 +215,99 @@ function AccountSettings({ onClose }: Props) {
     setMessage(null);
   };
 
+  // Add new account
+  const handleAddAccount = async (account: MailAccount | JmapAccount, protocol: "imap" | "jmap") => {
+    setAddingAccount(true);
+    setAddAccountError(null);
+
+    try {
+      if (protocol === "jmap") {
+        const jmapAccount = account as JmapAccount;
+        await invoke<JmapConnectedAccount>("jmap_connect", { account: jmapAccount });
+
+        // Save the JMAP account
+        const savedAccount: SavedJmapAccount = {
+          id: `jmap_${jmapAccount.username}`,
+          displayName: jmapAccount.displayName,
+          username: jmapAccount.username,
+          jmapUrl: jmapAccount.jmapUrl,
+          password: jmapAccount.password,
+          protocol: "jmap",
+        };
+        await invoke("save_jmap_account", { account: savedAccount });
+      } else {
+        const imapAccount = account as MailAccount;
+        await invoke<ConnectedAccount>("connect", { account: imapAccount });
+
+        // Save the IMAP account
+        const savedAccount: SavedAccount = {
+          id: imapAccount.username,
+          display_name: imapAccount.displayName,
+          username: imapAccount.username,
+          imap_host: imapAccount.imapHost,
+          imap_port: imapAccount.imapPort,
+          smtp_host: imapAccount.smtpHost,
+          smtp_port: imapAccount.smtpPort,
+          password: imapAccount.password,
+        };
+        await invoke("save_account", { account: savedAccount });
+      }
+
+      setShowAddAccount(false);
+      await loadAccounts();
+      onAccountsChanged?.();
+      setMessage({ type: "success", text: t("accounts.connected") });
+    } catch (e) {
+      setAddAccountError(String(e));
+    } finally {
+      setAddingAccount(false);
+    }
+  };
+
+  // Delete account
+  const handleDeleteAccount = async () => {
+    if (!selectedAccountId) return;
+
+    setDeletingAccount(true);
+    try {
+      // Disconnect the account first
+      try {
+        if (selectedAccountType === "jmap") {
+          await invoke("jmap_disconnect", { accountId: selectedAccountId });
+        } else {
+          await invoke("disconnect", { accountId: selectedAccountId });
+        }
+      } catch {
+        // Account might not be connected
+      }
+
+      // Delete the saved account
+      if (selectedAccountType === "jmap") {
+        await invoke("delete_saved_jmap_account", { accountId: selectedAccountId });
+      } else {
+        await invoke("delete_saved_account", { accountId: selectedAccountId });
+      }
+
+      // Clear cache for this account
+      try {
+        await invoke("clear_cache", { accountId: selectedAccountId });
+      } catch {
+        // Cache might not exist
+      }
+
+      setShowDeleteConfirm(false);
+      setSelectedAccountId(null);
+      setFormData(null);
+      await loadAccounts();
+      onAccountsChanged?.();
+      setMessage({ type: "success", text: t("accounts.deleteAccount") + " - OK" });
+    } catch (e) {
+      setMessage({ type: "error", text: `${t("errors.deleteFailed")}: ${e}` });
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: "general", label: t("settings.general") },
     { id: "signatures", label: t("settings.signatures") },
@@ -234,17 +387,40 @@ function AccountSettings({ onClose }: Props) {
         {/* Account list (left side) */}
         <div className="w-64 border-r bg-gray-50 overflow-y-auto">
           <div className="p-4">
-            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-3">
-              {t("accounts.title")}
-            </h3>
-            {accounts.length === 0 ? (
-              <p className="text-sm text-gray-500">{t("accounts.disconnected")}</p>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">
+                {t("accounts.title")}
+              </h3>
+              <button
+                onClick={() => setShowAddAccount(true)}
+                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                title={t("accounts.add")}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
+            </div>
+            {accounts.length === 0 && jmapAccounts.length === 0 ? (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-500 mb-2">{t("accounts.disconnected")}</p>
+                <button
+                  onClick={() => setShowAddAccount(true)}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  {t("accounts.add")}
+                </button>
+              </div>
             ) : (
               <ul className="space-y-1">
+                {/* IMAP Accounts */}
                 {accounts.map((account) => (
                   <li key={account.id}>
                     <button
-                      onClick={() => selectAccount(account.id)}
+                      onClick={() => {
+                        selectAccount(account.id);
+                        setSelectedAccountType("imap");
+                      }}
                       className={`w-full text-left px-3 py-2 rounded transition-colors ${
                         selectedAccountId === account.id
                           ? "bg-blue-100 text-blue-800"
@@ -253,14 +429,49 @@ function AccountSettings({ onClose }: Props) {
                     >
                       <div className="flex items-center gap-2">
                         <span
-                          className={`w-2 h-2 rounded-full ${
-                            selectedAccountId === account.id ? "bg-blue-600" : "bg-gray-300"
+                          onClick={(e) => handleStatusClick(e, account.id)}
+                          className={`w-2.5 h-2.5 rounded-full cursor-pointer hover:ring-2 hover:ring-blue-300 ${
+                            selectedAccountId === account.id ? "bg-blue-600" : "bg-gray-400"
                           }`}
+                          title={t("accounts.status")}
                         />
-                        <div className="overflow-hidden">
+                        <div className="overflow-hidden flex-1">
                           <div className="font-medium truncate">{account.display_name}</div>
                           <div className="text-xs text-gray-500 truncate">{account.username}</div>
                         </div>
+                        <span className="text-xs text-gray-400">IMAP</span>
+                      </div>
+                    </button>
+                  </li>
+                ))}
+                {/* JMAP Accounts */}
+                {jmapAccounts.map((account) => (
+                  <li key={account.id}>
+                    <button
+                      onClick={() => {
+                        setSelectedAccountId(account.id);
+                        setSelectedAccountType("jmap");
+                        setFormData(null); // JMAP accounts use different form
+                      }}
+                      className={`w-full text-left px-3 py-2 rounded transition-colors ${
+                        selectedAccountId === account.id
+                          ? "bg-blue-100 text-blue-800"
+                          : "hover:bg-gray-100 text-gray-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          onClick={(e) => handleStatusClick(e, account.id)}
+                          className={`w-2.5 h-2.5 rounded-full cursor-pointer hover:ring-2 hover:ring-green-300 ${
+                            selectedAccountId === account.id ? "bg-blue-600" : "bg-gray-400"
+                          }`}
+                          title={t("accounts.status")}
+                        />
+                        <div className="overflow-hidden flex-1">
+                          <div className="font-medium truncate">{account.displayName}</div>
+                          <div className="text-xs text-gray-500 truncate">{account.username}</div>
+                        </div>
+                        <span className="text-xs text-green-600">JMAP</span>
                       </div>
                     </button>
                   </li>
@@ -272,11 +483,85 @@ function AccountSettings({ onClose }: Props) {
 
         {/* Edit form (right side) */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {!formData ? (
+          {/* JMAP Account View */}
+          {selectedAccountType === "jmap" && selectedAccountId && (
+            <>
+              <div className="border-b px-6 py-4">
+                <h3 className="text-lg font-medium text-gray-900">JMAP {t("accounts.title")}</h3>
+              </div>
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="max-w-2xl">
+                  {message && (
+                    <div
+                      className={`mb-4 px-4 py-3 rounded ${
+                        message.type === "success"
+                          ? "bg-green-100 border border-green-300 text-green-700"
+                          : "bg-red-100 border border-red-300 text-red-700"
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                  )}
+                  {(() => {
+                    const jmapAccount = jmapAccounts.find(a => a.id === selectedAccountId);
+                    if (!jmapAccount) return null;
+                    return (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {t("accounts.displayName")}
+                          </label>
+                          <input
+                            type="text"
+                            value={jmapAccount.displayName}
+                            className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50"
+                            disabled
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {t("accounts.username")}
+                          </label>
+                          <input
+                            type="text"
+                            value={jmapAccount.username}
+                            className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50"
+                            disabled
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {t("accounts.jmapUrl")}
+                          </label>
+                          <input
+                            type="text"
+                            value={jmapAccount.jmapUrl}
+                            className="w-full px-3 py-2 border border-gray-300 rounded bg-gray-50"
+                            disabled
+                          />
+                        </div>
+                        <div className="border-t pt-4 mt-4">
+                          <button
+                            onClick={() => setShowDeleteConfirm(true)}
+                            className="px-4 py-2 text-red-600 border border-red-300 rounded hover:bg-red-50"
+                          >
+                            {t("accounts.deleteAccount")}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </>
+          )}
+          {/* IMAP Account View */}
+          {selectedAccountType === "imap" && !formData && (
             <div className="h-full flex items-center justify-center text-gray-400">
               {t("common.select")}
             </div>
-          ) : (
+          )}
+          {selectedAccountType === "imap" && formData && (
             <>
               {/* Tab navigation */}
               <div className="border-b px-6">
@@ -540,6 +825,13 @@ function AccountSettings({ onClose }: Props) {
                         >
                           {t("common.cancel")}
                         </button>
+                        <div className="flex-1" />
+                        <button
+                          onClick={() => setShowDeleteConfirm(true)}
+                          className="px-4 py-2 text-red-600 border border-red-300 rounded hover:bg-red-50"
+                        >
+                          {t("accounts.deleteAccount")}
+                        </button>
                       </div>
                     </div>
                   )}
@@ -586,7 +878,7 @@ function AccountSettings({ onClose }: Props) {
                             </div>
                             <div>
                               <h4 className="font-semibold text-gray-900">{t("app.name")}</h4>
-                              <p className="text-sm text-gray-500">{t("app.version", { version: "0.1.0" })}</p>
+                              <p className="text-sm text-gray-500">{t("app.version", { version: appVersion })}</p>
                             </div>
                           </div>
                         </div>
@@ -699,7 +991,7 @@ function AccountSettings({ onClose }: Props) {
                       </div>
                       <div>
                         <h4 className="font-semibold text-gray-900">{t("app.name")}</h4>
-                        <p className="text-sm text-gray-500">{t("app.version", { version: "0.1.0" })}</p>
+                        <p className="text-sm text-gray-500">{t("app.version", { version: appVersion })}</p>
                       </div>
                     </div>
                   </div>
@@ -794,6 +1086,108 @@ function AccountSettings({ onClose }: Props) {
           )}
         </div>
       </div>
+
+      {/* Add Account Modal */}
+      {showAddAccount && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => {
+                setShowAddAccount(false);
+                setAddAccountError(null);
+              }}
+              className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 z-10"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <ConnectionForm
+              onConnect={handleAddAccount}
+              loading={addingAccount}
+              error={addAccountError}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl max-w-sm w-full mx-4 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+              {t("accounts.deleteAccount")}
+            </h3>
+            <p className="text-gray-600 mb-4">
+              {t("accounts.deleteConfirm", "Möchten Sie dieses Konto wirklich löschen? Alle gespeicherten Daten werden entfernt.")}
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deletingAccount}
+                className="px-4 py-2 text-gray-600 border border-gray-300 rounded hover:bg-gray-50 disabled:cursor-not-allowed"
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount}
+                className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed"
+              >
+                {deletingAccount ? t("common.loading") : t("common.delete")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Status Popup */}
+      {statusPopup && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setStatusPopup(null)}
+          />
+          <div
+            className="fixed bg-white rounded-lg shadow-xl border border-gray-200 z-50 min-w-56"
+            style={{ left: statusPopup.x, top: statusPopup.y }}
+          >
+            <div className="px-4 py-3 border-b border-gray-100">
+              <h4 className="font-medium text-gray-900">{t("accounts.connectionStatus")}</h4>
+            </div>
+            <div className="p-3">
+              {loadingStatus ? (
+                <div className="flex items-center justify-center py-4">
+                  <svg className="animate-spin w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </div>
+              ) : accountStatus ? (
+                <div className="space-y-2">
+                  {accountStatus.protocols.map((proto) => (
+                    <div key={proto.protocol} className="flex items-center justify-between gap-4">
+                      <span className="text-sm font-medium text-gray-700">{proto.protocol}</span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            proto.connected ? "bg-green-500" : "bg-red-500"
+                          }`}
+                        />
+                        <span className={`text-xs ${proto.connected ? "text-green-600" : "text-red-600"}`}>
+                          {proto.connected ? t("accounts.connected") : (proto.error || t("accounts.disconnected"))}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">{t("errors.loadFailed")}</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

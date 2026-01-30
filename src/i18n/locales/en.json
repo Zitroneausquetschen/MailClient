@@ -13,6 +13,7 @@
   },
   "email": {
     "inbox": "Inbox",
+    "allInboxes": "All Inboxes",
     "compose": "Compose",
     "reply": "Reply",
     "replyAll": "Reply All",
@@ -67,10 +68,12 @@
   "folders": {
     "title": "Folders",
     "create": "Create folder",
+    "createSubfolder": "Create subfolder",
+    "parentFolder": "Parent folder",
     "rename": "Rename",
     "delete": "Delete",
     "newFolderName": "New folder name",
-    "confirmDelete": "Really delete folder?",
+    "confirmDelete": "Really delete folder \"{{name}}\"?",
     "createSuccess": "Folder created",
     "renameSuccess": "Folder renamed",
     "deleteSuccess": "Folder deleted"
@@ -116,7 +119,12 @@
     "imapDescription": "Traditional email protocol (most servers)",
     "jmapDescription": "Modern JSON-based protocol (Stalwart, Fastmail)",
     "jmapUrl": "JMAP Server URL",
-    "jmapUrlHint": "Usually: https://your-server/.well-known/jmap"
+    "jmapUrlHint": "Usually: https://your-server/.well-known/jmap",
+    "deleteConfirm": "Are you sure you want to delete this account? All saved data will be removed.",
+    "connected": "Connected",
+    "lookingForJmap": "Looking for JMAP server...",
+    "status": "Show status",
+    "connectionStatus": "Connection Status"
   },
   "settings": {
     "title": "Settings",
@@ -221,7 +229,7 @@
     "saving": "Saving..."
   },
   "tasks": {
-    "title": "Tasks",
+    "title": "Title",
     "add": "Add task",
     "edit": "Edit",
     "delete": "Delete",
@@ -240,7 +248,10 @@
     "complete": "Complete",
     "save": "Save",
     "cancel": "Cancel",
-    "confirmDelete": "Really delete task?"
+    "confirmDelete": "Really delete task?",
+    "createTask": "Create task",
+    "newTask": "New task",
+    "notes": "Notes"
   },
   "notes": {
     "title": "Notes",
@@ -349,6 +360,7 @@
   },
   "contextMenu": {
     "open": "Open",
+    "createTask": "Create task...",
     "createRule": "Create rule..."
   },
   "common": {
