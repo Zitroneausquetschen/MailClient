@@ -112,6 +112,7 @@ function App() {
   const [showSpamDialog, setShowSpamDialog] = useState(false);
   const [spamCandidates, setSpamCandidates] = useState<SpamCandidate[]>([]);
   const [scanningSpam, setScanningSpam] = useState(false);
+  const [spamCount, setSpamCount] = useState(0);
 
   // Helper to set error and play sound
   const showError = (message: string) => {
@@ -312,6 +313,8 @@ function App() {
         setSelectedFolder(inboxFolder);
         // Load categories for the account
         loadCategories(activeAccountId);
+        // Load spam count
+        loadSpamCount(activeAccountId, inboxFolder);
       }
     };
     loadAccountData();
@@ -334,15 +337,22 @@ function App() {
           const highestUid = Math.max(...headers.map(h => h.uid));
 
           if (lastKnownUidRef.current > 0 && highestUid > lastKnownUidRef.current) {
-            const newCount = headers.filter(h => h.uid > lastKnownUidRef.current).length;
+            const newEmails = headers.filter(h => h.uid > lastKnownUidRef.current);
+            const newCount = newEmails.length;
             setNewEmailCount(newCount);
             playReceivedSound();
 
             if (selectedFolder === "INBOX") {
               setEmails(prev => {
-                const newEmails = headers.filter(h => !prev.find(e => e.uid === h.uid));
-                return [...newEmails, ...prev];
+                const toAdd = headers.filter(h => !prev.find(e => e.uid === h.uid));
+                return [...toAdd, ...prev];
               });
+            }
+
+            // Background spam scan for new emails (if cache enabled)
+            if (activeAccountSettings?.cache_enabled && newEmails.length > 0) {
+              const newUids = newEmails.map(h => h.uid);
+              scanNewEmailsForSpam(activeAccountId, "INBOX", newUids);
             }
           }
 
@@ -804,6 +814,8 @@ function App() {
     if (activeAccountId) {
       clearSearch();
       await loadEmails(activeAccountId, folder);
+      // Load spam count for new folder
+      loadSpamCount(activeAccountId, folder);
     }
   };
 
@@ -1182,23 +1194,50 @@ function App() {
   };
 
   // Spam detection handlers
-  const handleScanForSpam = async () => {
+  const loadSpamCount = async (accountId: string, folder: string) => {
+    try {
+      const count = await invoke<number>("ai_get_spam_count", { accountId, folder });
+      setSpamCount(count);
+    } catch {
+      setSpamCount(0);
+    }
+  };
+
+  const handleShowSpam = async () => {
     if (!activeAccountId) return;
     setShowSpamDialog(true);
     setScanningSpam(true);
     setSpamCandidates([]);
     try {
+      // This will scan unscanned emails and return all cached spam
       const candidates = await invoke<SpamCandidate[]>("ai_scan_for_spam", {
         accountId: activeAccountId,
         folder: selectedFolder,
-        limit: 50,
+        limit: 100,
       });
       setSpamCandidates(candidates);
+      setSpamCount(candidates.length);
     } catch (e) {
       showError(t("spam.scanError", { error: String(e) }));
       setShowSpamDialog(false);
     } finally {
       setScanningSpam(false);
+    }
+  };
+
+  const scanNewEmailsForSpam = async (accountId: string, folder: string, uids: number[]) => {
+    try {
+      const spamFound = await invoke<number>("ai_scan_new_emails", {
+        accountId,
+        folder,
+        uids,
+      });
+      if (spamFound > 0) {
+        // Update spam count
+        loadSpamCount(accountId, folder);
+      }
+    } catch {
+      // Silently fail background scan
     }
   };
 
@@ -1225,6 +1264,9 @@ function App() {
       if (selectedEmail && uidSet.has(selectedEmail.uid)) {
         setSelectedEmail(null);
       }
+
+      // Update spam count
+      setSpamCount((prev) => Math.max(0, prev - selectedUids.length));
     } catch (e) {
       showError(String(e));
     }
@@ -1754,15 +1796,24 @@ function App() {
                 {/* Spam Scan Button */}
                 {activeAccountSettings?.cache_enabled && (
                   <button
-                    onClick={handleScanForSpam}
+                    onClick={handleShowSpam}
                     disabled={scanningSpam}
-                    className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded flex items-center gap-1 disabled:opacity-50"
+                    className={`px-3 py-1.5 text-sm rounded flex items-center gap-1 disabled:opacity-50 relative ${
+                      spamCount > 0
+                        ? "text-red-600 hover:text-red-800 hover:bg-red-50"
+                        : "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
+                    }`}
                     title={t("spam.scanInbox")}
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <span>{t("spam.scanInbox")}</span>
+                    {spamCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                        {spamCount > 9 ? "9+" : spamCount}
+                      </span>
+                    )}
                   </button>
                 )}
 

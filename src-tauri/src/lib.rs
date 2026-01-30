@@ -1363,49 +1363,168 @@ async fn ai_calculate_importance(subject: String, from: String, body: String) ->
     ai::calculate_importance(provider.as_ref(), &subject, &from, &body).await
 }
 
+/// Scan for spam - only scans unscanned emails and caches results
 #[tauri::command]
 async fn ai_scan_for_spam(account_id: String, folder: String, limit: Option<u32>) -> Result<Vec<ai::SpamCandidate>, String> {
     let config = storage::load_ai_config()?;
     let provider = create_ai_provider(&config)?;
     let email_cache = cache::EmailCache::new(&account_id)?;
 
-    // Get unread emails from cache
+    // Get UIDs that haven't been scanned yet
     let limit = limit.unwrap_or(50);
-    let headers = email_cache.get_headers(&folder, 0, limit)?;
+    let unscanned_uids = email_cache.get_unscanned_uids(&folder, limit)?;
 
-    // Filter to unread only
-    let unread_headers: Vec<_> = headers.into_iter().filter(|h| !h.is_read).collect();
+    if !unscanned_uids.is_empty() {
+        // Get headers for unscanned emails
+        let headers = email_cache.get_headers(&folder, 0, 500)?;
+        let unscanned_headers: Vec<_> = headers
+            .into_iter()
+            .filter(|h| unscanned_uids.contains(&h.uid))
+            .collect();
 
-    if unread_headers.is_empty() {
-        return Ok(vec![]);
+        // Process in batches of 10 for better AI performance
+        for chunk in unscanned_headers.chunks(10) {
+            let email_data: Vec<(u32, String, String, String, String)> = chunk
+                .iter()
+                .map(|h| {
+                    let body = email_cache.get_email(&folder, h.uid)
+                        .ok()
+                        .flatten()
+                        .map(|e| e.body_text)
+                        .unwrap_or_default();
+                    (h.uid, folder.clone(), h.subject.clone(), h.from.clone(), body)
+                })
+                .collect();
+
+            match ai::detect_spam_batch(provider.as_ref(), &email_data).await {
+                Ok(candidates) => {
+                    // Store results in cache
+                    for data in &email_data {
+                        let uid = data.0;
+                        let is_spam = candidates.iter().any(|c| c.uid == uid);
+                        let (confidence, reason) = candidates
+                            .iter()
+                            .find(|c| c.uid == uid)
+                            .map(|c| (c.confidence, c.reason.clone()))
+                            .unwrap_or((0, String::new()));
+                        let _ = email_cache.store_spam_result(&folder, uid, is_spam, confidence, &reason);
+                    }
+                }
+                Err(e) => eprintln!("Spam detection batch failed: {}", e),
+            }
+        }
+
+        // Update scan state with highest UID
+        if let Some(max_uid) = unscanned_uids.iter().max() {
+            let _ = email_cache.set_spam_scan_state(&folder, *max_uid);
+        }
     }
 
-    // Build email data for AI analysis
-    // Process in batches of 10 for better AI performance
-    let mut all_candidates = vec![];
+    // Return all cached spam candidates
+    ai_get_spam_candidates(account_id, folder).await
+}
 
-    for chunk in unread_headers.chunks(10) {
+/// Get cached spam candidates without scanning
+#[tauri::command]
+async fn ai_get_spam_candidates(account_id: String, folder: String) -> Result<Vec<ai::SpamCandidate>, String> {
+    let email_cache = cache::EmailCache::new(&account_id)?;
+    let headers = email_cache.get_headers(&folder, 0, 500)?;
+
+    // Get cached spam results
+    let spam_data = email_cache.get_spam_candidates(&folder)?;
+
+    // Build SpamCandidate structs with email details
+    let candidates: Vec<ai::SpamCandidate> = spam_data
+        .into_iter()
+        .filter_map(|(uid, confidence, reason)| {
+            headers.iter()
+                .find(|h| h.uid == uid)
+                .map(|h| ai::SpamCandidate {
+                    uid,
+                    folder: folder.clone(),
+                    subject: h.subject.clone(),
+                    from: h.from.clone(),
+                    confidence,
+                    reason,
+                })
+        })
+        .collect();
+
+    Ok(candidates)
+}
+
+/// Get count of detected spam in folder
+#[tauri::command]
+async fn ai_get_spam_count(account_id: String, folder: String) -> Result<u32, String> {
+    let email_cache = cache::EmailCache::new(&account_id)?;
+    email_cache.get_spam_count(&folder)
+}
+
+/// Scan new emails in background (called when new emails arrive)
+#[tauri::command]
+async fn ai_scan_new_emails(account_id: String, folder: String, uids: Vec<u32>) -> Result<u32, String> {
+    let config = match storage::load_ai_config() {
+        Ok(c) => c,
+        Err(_) => return Ok(0), // AI not configured, skip
+    };
+
+    let provider = match create_ai_provider(&config) {
+        Ok(p) => p,
+        Err(_) => return Ok(0), // Provider not available, skip
+    };
+
+    let email_cache = cache::EmailCache::new(&account_id)?;
+
+    // Filter to only unscanned UIDs
+    let unscanned: Vec<u32> = uids
+        .into_iter()
+        .filter(|uid| !email_cache.is_spam_scanned(&folder, *uid).unwrap_or(true))
+        .collect();
+
+    if unscanned.is_empty() {
+        return Ok(0);
+    }
+
+    let headers = email_cache.get_headers(&folder, 0, 500)?;
+    let to_scan: Vec<_> = headers
+        .into_iter()
+        .filter(|h| unscanned.contains(&h.uid))
+        .collect();
+
+    let mut spam_found = 0;
+
+    for chunk in to_scan.chunks(10) {
         let email_data: Vec<(u32, String, String, String, String)> = chunk
             .iter()
             .map(|h| {
-                // Try to get body preview from cache
                 let body = email_cache.get_email(&folder, h.uid)
                     .ok()
                     .flatten()
                     .map(|e| e.body_text)
                     .unwrap_or_default();
-
                 (h.uid, folder.clone(), h.subject.clone(), h.from.clone(), body)
             })
             .collect();
 
         match ai::detect_spam_batch(provider.as_ref(), &email_data).await {
-            Ok(candidates) => all_candidates.extend(candidates),
-            Err(e) => eprintln!("Spam detection batch failed: {}", e),
+            Ok(candidates) => {
+                spam_found += candidates.len() as u32;
+                for data in &email_data {
+                    let uid = data.0;
+                    let is_spam = candidates.iter().any(|c| c.uid == uid);
+                    let (confidence, reason) = candidates
+                        .iter()
+                        .find(|c| c.uid == uid)
+                        .map(|c| (c.confidence, c.reason.clone()))
+                        .unwrap_or((0, String::new()));
+                    let _ = email_cache.store_spam_result(&folder, uid, is_spam, confidence, &reason);
+                }
+            }
+            Err(e) => eprintln!("Background spam scan failed: {}", e),
         }
     }
 
-    Ok(all_candidates)
+    Ok(spam_found)
 }
 
 #[tauri::command]
@@ -1907,6 +2026,9 @@ pub fn run() {
             ai_extract_deadlines,
             ai_calculate_importance,
             ai_scan_for_spam,
+            ai_get_spam_candidates,
+            ai_get_spam_count,
+            ai_scan_new_emails,
             list_ollama_models,
             get_openai_models,
             get_anthropic_models,

@@ -130,6 +130,25 @@ impl EmailCache {
             );
 
             CREATE INDEX IF NOT EXISTS idx_email_categories_category ON email_categories(category_id);
+
+            -- Spam scan results
+            CREATE TABLE IF NOT EXISTS spam_scan (
+                folder TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                is_spam INTEGER NOT NULL,
+                confidence INTEGER DEFAULT 0,
+                reason TEXT,
+                scanned_at INTEGER NOT NULL,
+                PRIMARY KEY (folder, uid)
+            );
+
+            CREATE TABLE IF NOT EXISTS spam_scan_state (
+                folder TEXT PRIMARY KEY,
+                last_scanned_uid INTEGER NOT NULL,
+                last_scan_time INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_spam_scan_spam ON spam_scan(folder, is_spam);
             "
         ).map_err(|e| format!("Failed to create tables: {}", e))?;
 
@@ -809,7 +828,7 @@ impl EmailCache {
 
     /// Update email flags (seen, flagged)
     pub fn update_email_flags(&self, folder: &str, uid: u32, seen: bool, flagged: Option<bool>) -> Result<(), String> {
-        if let Some(f) = flagged {
+        if let Some(_f) = flagged {
             self.db.execute(
                 "UPDATE emails SET is_read = ?1 WHERE folder = ?2 AND uid = ?3",
                 params![seen as i32, folder, uid],
@@ -823,6 +842,137 @@ impl EmailCache {
         }
 
         Ok(())
+    }
+
+    // === Spam Scan Methods ===
+
+    /// Store spam scan result for an email
+    pub fn store_spam_result(&self, folder: &str, uid: u32, is_spam: bool, confidence: u8, reason: &str) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        self.db.execute(
+            "INSERT OR REPLACE INTO spam_scan (folder, uid, is_spam, confidence, reason, scanned_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![folder, uid, is_spam as i32, confidence as i32, reason, now],
+        ).map_err(|e| format!("Failed to store spam result: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Store multiple spam scan results
+    pub fn store_spam_results(&self, folder: &str, results: &[(u32, bool, u8, String)]) -> Result<(), String> {
+        for (uid, is_spam, confidence, reason) in results {
+            self.store_spam_result(folder, *uid, *is_spam, *confidence, reason)?;
+        }
+        Ok(())
+    }
+
+    /// Get spam scan state for a folder (last scanned UID)
+    pub fn get_spam_scan_state(&self, folder: &str) -> Result<Option<u32>, String> {
+        let uid = self.db.query_row(
+            "SELECT last_scanned_uid FROM spam_scan_state WHERE folder = ?1",
+            params![folder],
+            |row| row.get::<_, u32>(0),
+        ).optional().map_err(|e| format!("Failed to get spam scan state: {}", e))?;
+
+        Ok(uid)
+    }
+
+    /// Update spam scan state for a folder
+    pub fn set_spam_scan_state(&self, folder: &str, last_uid: u32) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        self.db.execute(
+            "INSERT OR REPLACE INTO spam_scan_state (folder, last_scanned_uid, last_scan_time)
+             VALUES (?1, ?2, ?3)",
+            params![folder, last_uid, now],
+        ).map_err(|e| format!("Failed to set spam scan state: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Get all detected spam candidates in a folder
+    pub fn get_spam_candidates(&self, folder: &str) -> Result<Vec<(u32, u8, String)>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT uid, confidence, reason FROM spam_scan
+             WHERE folder = ?1 AND is_spam = 1
+             ORDER BY confidence DESC"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map(params![folder], |row| {
+            Ok((
+                row.get::<_, u32>(0)?,
+                row.get::<_, i32>(1)? as u8,
+                row.get::<_, String>(2)?,
+            ))
+        }).map_err(|e| format!("Failed to query spam candidates: {}", e))?;
+
+        let mut candidates = Vec::new();
+        for row in rows {
+            candidates.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(candidates)
+    }
+
+    /// Check if an email has been spam-scanned
+    pub fn is_spam_scanned(&self, folder: &str, uid: u32) -> Result<bool, String> {
+        let scanned: bool = self.db.query_row(
+            "SELECT 1 FROM spam_scan WHERE folder = ?1 AND uid = ?2",
+            params![folder, uid],
+            |_| Ok(true),
+        ).optional().map_err(|e| format!("Failed to check spam scan: {}", e))?.unwrap_or(false);
+
+        Ok(scanned)
+    }
+
+    /// Get UIDs that haven't been spam-scanned yet in a folder
+    pub fn get_unscanned_uids(&self, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT e.uid FROM emails e
+             LEFT JOIN spam_scan s ON e.folder = s.folder AND e.uid = s.uid
+             WHERE e.folder = ?1 AND s.uid IS NULL
+             ORDER BY e.date_timestamp DESC
+             LIMIT ?2"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map(params![folder, limit], |row| {
+            row.get::<_, u32>(0)
+        }).map_err(|e| format!("Failed to query unscanned UIDs: {}", e))?;
+
+        let mut uids = Vec::new();
+        for row in rows {
+            uids.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(uids)
+    }
+
+    /// Remove spam scan result when email is moved/deleted
+    pub fn remove_spam_result(&self, folder: &str, uid: u32) -> Result<(), String> {
+        self.db.execute(
+            "DELETE FROM spam_scan WHERE folder = ?1 AND uid = ?2",
+            params![folder, uid],
+        ).map_err(|e| format!("Failed to remove spam result: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Get count of detected spam in a folder
+    pub fn get_spam_count(&self, folder: &str) -> Result<u32, String> {
+        let count: u32 = self.db.query_row(
+            "SELECT COUNT(*) FROM spam_scan WHERE folder = ?1 AND is_spam = 1",
+            params![folder],
+            |row| row.get(0),
+        ).map_err(|e| format!("Failed to count spam: {}", e))?;
+
+        Ok(count)
     }
 }
 
