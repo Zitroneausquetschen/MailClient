@@ -1364,6 +1364,51 @@ async fn ai_calculate_importance(subject: String, from: String, body: String) ->
 }
 
 #[tauri::command]
+async fn ai_scan_for_spam(account_id: String, folder: String, limit: Option<u32>) -> Result<Vec<ai::SpamCandidate>, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    let email_cache = cache::EmailCache::new(&account_id)?;
+
+    // Get unread emails from cache
+    let limit = limit.unwrap_or(50);
+    let headers = email_cache.get_headers(&folder, 0, limit)?;
+
+    // Filter to unread only
+    let unread_headers: Vec<_> = headers.into_iter().filter(|h| !h.is_read).collect();
+
+    if unread_headers.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build email data for AI analysis
+    // Process in batches of 10 for better AI performance
+    let mut all_candidates = vec![];
+
+    for chunk in unread_headers.chunks(10) {
+        let email_data: Vec<(u32, String, String, String, String)> = chunk
+            .iter()
+            .map(|h| {
+                // Try to get body preview from cache
+                let body = email_cache.get_email(&folder, h.uid)
+                    .ok()
+                    .flatten()
+                    .map(|e| e.body_text)
+                    .unwrap_or_default();
+
+                (h.uid, folder.clone(), h.subject.clone(), h.from.clone(), body)
+            })
+            .collect();
+
+        match ai::detect_spam_batch(provider.as_ref(), &email_data).await {
+            Ok(candidates) => all_candidates.extend(candidates),
+            Err(e) => eprintln!("Spam detection batch failed: {}", e),
+        }
+    }
+
+    Ok(all_candidates)
+}
+
+#[tauri::command]
 async fn list_ollama_models(base_url: String) -> Result<Vec<String>, String> {
     ai::ollama::list_ollama_models(&base_url).await
 }
@@ -1861,6 +1906,7 @@ pub fn run() {
             ai_summarize_email,
             ai_extract_deadlines,
             ai_calculate_importance,
+            ai_scan_for_spam,
             list_ollama_models,
             get_openai_models,
             get_anthropic_models,

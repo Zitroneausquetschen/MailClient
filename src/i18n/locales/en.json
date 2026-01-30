@@ -412,6 +412,25 @@
       "changeCategory": "Change category..."
     }
   },
+  "spam": {
+    "scanInbox": "Scan inbox for spam",
+    "reviewTitle": "Spam Detection",
+    "scanning": "Scanning emails...",
+    "analyzingEmails": "AI is analyzing emails for spam...",
+    "foundCount": "{{count}} suspicious email(s) found",
+    "noSpamFound": "No spam detected",
+    "inboxClean": "Your inbox looks clean!",
+    "selectAll": "Select all",
+    "selectNone": "Select none",
+    "selectedCount": "{{count}} selected",
+    "highConfidence": "High confidence",
+    "mediumConfidence": "Likely spam",
+    "lowConfidence": "Possible spam",
+    "moveToSpam": "Move {{count}} to spam",
+    "moving": "Moving...",
+    "reviewHint": "Review the selection before moving",
+    "scanError": "Spam scan error: {{error}}"
+  },
   "common": {
     "ok": "OK",
     "cancel": "Cancel",

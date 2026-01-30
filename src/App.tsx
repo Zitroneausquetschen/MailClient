@@ -20,7 +20,8 @@ import CategoryTabs from "./components/CategoryTabs";
 import CategoryManager from "./components/CategoryManager";
 import AIChatPanel from "./components/AIChatPanel";
 import DayAgentPanel from "./components/DayAgentPanel";
-import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount, EmailCategory } from "./types/mail";
+import SpamReviewDialog from "./components/SpamReviewDialog";
+import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount, EmailCategory, SpamCandidate } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
@@ -106,6 +107,11 @@ function App() {
 
   // AI Chat panel state
   const [showAIChat, setShowAIChat] = useState(false);
+
+  // Spam detection state
+  const [showSpamDialog, setShowSpamDialog] = useState(false);
+  const [spamCandidates, setSpamCandidates] = useState<SpamCandidate[]>([]);
+  const [scanningSpam, setScanningSpam] = useState(false);
 
   // Helper to set error and play sound
   const showError = (message: string) => {
@@ -1175,6 +1181,55 @@ function App() {
     setSelectedUids(new Set(emails.map((e) => e.uid)));
   };
 
+  // Spam detection handlers
+  const handleScanForSpam = async () => {
+    if (!activeAccountId) return;
+    setShowSpamDialog(true);
+    setScanningSpam(true);
+    setSpamCandidates([]);
+    try {
+      const candidates = await invoke<SpamCandidate[]>("ai_scan_for_spam", {
+        accountId: activeAccountId,
+        folder: selectedFolder,
+        limit: 50,
+      });
+      setSpamCandidates(candidates);
+    } catch (e) {
+      showError(t("spam.scanError", { error: String(e) }));
+      setShowSpamDialog(false);
+    } finally {
+      setScanningSpam(false);
+    }
+  };
+
+  const handleConfirmSpam = async (selectedUids: number[]) => {
+    if (!activeAccountId || selectedUids.length === 0) return;
+    try {
+      // Find spam folder
+      const spamFolder = folders.find(f =>
+        f.name.toLowerCase() === "spam" ||
+        f.name.toLowerCase() === "junk" ||
+        f.name.toLowerCase() === "[gmail]/spam"
+      )?.name || "Spam";
+
+      await invoke("bulk_move", {
+        accountId: activeAccountId,
+        folder: selectedFolder,
+        uids: selectedUids,
+        targetFolder: spamFolder,
+      });
+
+      // Update local state
+      const uidSet = new Set(selectedUids);
+      setEmails((prev) => prev.filter((e) => !uidSet.has(e.uid)));
+      if (selectedEmail && uidSet.has(selectedEmail.uid)) {
+        setSelectedEmail(null);
+      }
+    } catch (e) {
+      showError(String(e));
+    }
+  };
+
   // Folder management
   const handleCreateFolder = async (name: string) => {
     if (!activeAccountId) return;
@@ -1696,6 +1751,21 @@ function App() {
                   </button>
                 )}
 
+                {/* Spam Scan Button */}
+                {activeAccountSettings?.cache_enabled && (
+                  <button
+                    onClick={handleScanForSpam}
+                    disabled={scanningSpam}
+                    className="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded flex items-center gap-1 disabled:opacity-50"
+                    title={t("spam.scanInbox")}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span>{t("spam.scanInbox")}</span>
+                  </button>
+                )}
+
                 {/* AI Assistant Toggle */}
                 <button
                   onClick={() => setShowAIChat(!showAIChat)}
@@ -2094,6 +2164,15 @@ function App() {
           onCategoriesChanged={() => loadCategories(activeAccountId)}
         />
       )}
+
+      {/* Spam Review Dialog */}
+      <SpamReviewDialog
+        isOpen={showSpamDialog}
+        candidates={spamCandidates}
+        isScanning={scanningSpam}
+        onClose={() => setShowSpamDialog(false)}
+        onConfirm={handleConfirmSpam}
+      />
 
       {/* Update Checker - checks automatically on app start */}
       <UpdateChecker checkOnMount={true} />

@@ -412,6 +412,25 @@
       "changeCategory": "Kategorie ändern..."
     }
   },
+  "spam": {
+    "scanInbox": "Posteingang auf Spam prüfen",
+    "reviewTitle": "Spam-Erkennung",
+    "scanning": "Durchsuche E-Mails...",
+    "analyzingEmails": "KI analysiert E-Mails auf Spam...",
+    "foundCount": "{{count}} verdächtige E-Mail(s) gefunden",
+    "noSpamFound": "Kein Spam erkannt",
+    "inboxClean": "Dein Posteingang sieht sauber aus!",
+    "selectAll": "Alle auswählen",
+    "selectNone": "Keine auswählen",
+    "selectedCount": "{{count}} ausgewählt",
+    "highConfidence": "Sicher Spam",
+    "mediumConfidence": "Wahrscheinlich",
+    "lowConfidence": "Möglich",
+    "moveToSpam": "{{count}} in Spam verschieben",
+    "moving": "Verschiebe...",
+    "reviewHint": "Prüfe die Auswahl vor dem Verschieben",
+    "scanError": "Fehler beim Spam-Scan: {{error}}"
+  },
   "common": {
     "ok": "OK",
     "cancel": "Abbrechen",

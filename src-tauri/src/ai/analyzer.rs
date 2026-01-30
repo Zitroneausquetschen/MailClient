@@ -219,6 +219,111 @@ Wenn keine Deadlines gefunden, antworte mit: []"#.to_string(),
     }).collect())
 }
 
+/// Spam detection result
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpamCandidate {
+    pub uid: u32,
+    pub folder: String,
+    pub subject: String,
+    pub from: String,
+    pub confidence: u8,  // 0-100
+    pub reason: String,
+}
+
+/// Detect spam in a batch of emails
+pub async fn detect_spam_batch(
+    provider: &dyn AIProvider,
+    emails: &[(u32, String, String, String, String)],  // (uid, folder, subject, from, body_preview)
+) -> Result<Vec<SpamCandidate>, String> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build email list for AI
+    let email_list: String = emails
+        .iter()
+        .enumerate()
+        .map(|(idx, (uid, _folder, subject, from, body))| {
+            let body_preview = if body.len() > 300 {
+                format!("{}...", &body[..300])
+            } else {
+                body.clone()
+            };
+            format!(
+                "Email {}:\n  UID: {}\n  Von: {}\n  Betreff: {}\n  Inhalt: {}",
+                idx + 1, uid, from, subject, body_preview
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let messages = vec![
+        AIMessage {
+            role: "system".to_string(),
+            content: r#"Du bist ein Spam-Erkennungssystem. Analysiere die E-Mails und identifiziere Spam.
+
+Spam-Indikatoren:
+- Unbekannte Absender mit verdächtigen Domains
+- Unrealistische Angebote, Gewinnspiele, Lotterien
+- Dringende Zahlungsaufforderungen
+- Phishing-Versuche (Links zu gefälschten Websites)
+- Massenwerbung, Newsletter die nicht abonniert wurden
+- Schlechte Grammatik/Rechtschreibung
+- Verdächtige Anhänge erwähnt
+- "Mail Delivery System" Bounce-Mails von Spam
+
+Kein Spam:
+- Persönliche E-Mails von bekannten Kontakten
+- Geschäftliche Korrespondenz
+- Bestellbestätigungen von seriösen Shops
+- Abonnierte Newsletter
+
+Antworte NUR mit einem JSON-Array (keine anderen Texte):
+[{"uid": 123, "confidence": 0-100, "reason": "Kurze Begründung warum Spam"}]
+
+Nur E-Mails mit confidence >= 60 als Spam markieren.
+Wenn keine Spam-E-Mails gefunden: []"#.to_string(),
+        },
+        AIMessage {
+            role: "user".to_string(),
+            content: format!("Analysiere diese E-Mails auf Spam:\n\n{}", email_list),
+        },
+    ];
+
+    let response = provider.complete(messages).await?;
+    let json_str = extract_json(&response);
+
+    #[derive(serde::Deserialize)]
+    struct RawSpam {
+        uid: u32,
+        confidence: u8,
+        reason: String,
+    }
+
+    let spam_results: Vec<RawSpam> = serde_json::from_str(&json_str)
+        .unwrap_or_default();
+
+    // Map back to full SpamCandidate with email details
+    let candidates: Vec<SpamCandidate> = spam_results
+        .into_iter()
+        .filter_map(|s| {
+            emails.iter()
+                .find(|(uid, _, _, _, _)| *uid == s.uid)
+                .map(|(uid, folder, subject, from, _)| SpamCandidate {
+                    uid: *uid,
+                    folder: folder.clone(),
+                    subject: subject.clone(),
+                    from: from.clone(),
+                    confidence: s.confidence,
+                    reason: s.reason,
+                })
+        })
+        .collect();
+
+    Ok(candidates)
+}
+
 /// Calculate importance score
 pub async fn calculate_importance(
     provider: &dyn AIProvider,

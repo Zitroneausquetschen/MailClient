@@ -377,3 +377,13 @@ export interface CategoryResult {
 export interface EmailHeaderWithCategory extends EmailHeader {
   categoryId?: string;
 }
+
+// Spam detection types
+export interface SpamCandidate {
+  uid: number;
+  folder: string;
+  subject: string;
+  from: string;
+  confidence: number;  // 0-100
+  reason: string;
+}
