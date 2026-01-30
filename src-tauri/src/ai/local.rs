@@ -1,38 +1,54 @@
 // Local LLM provider using llama.cpp
-// Note: Local model inference is currently in development due to llama-cpp-2 API changes.
-// Download functionality is fully operational.
+// Supports GGUF models for local inference without external dependencies
 
 use async_trait::async_trait;
 use std::path::PathBuf;
+use std::sync::Arc;
+use llama_cpp::{LlamaModel, LlamaParams, SessionParams, standard_sampler::StandardSampler};
 use crate::ai::provider::{AIProvider, AIMessage, LocalModel};
 
-/// Local LLM provider using llama.cpp
-/// Currently in development - download works, inference coming soon
+/// Local LLM provider using llama.cpp for GGUF model inference
 pub struct LocalProvider {
     model_path: PathBuf,
+    model: Option<Arc<LlamaModel>>,
+    model_type: LocalModel,
 }
 
 impl LocalProvider {
-    pub fn new(model_path: PathBuf) -> Self {
+    pub fn new(model_path: PathBuf, model_type: LocalModel) -> Self {
         Self {
             model_path,
+            model: None,
+            model_type,
         }
     }
 
     /// Load the model into memory
-    /// TODO: Implement with updated llama-cpp-2 API
-    pub fn load_model(&self) -> Result<(), String> {
+    pub fn load_model(&mut self) -> Result<(), String> {
         if !self.model_path.exists() {
             return Err("Model file not found. Please download the model first.".to_string());
         }
 
-        // Model loading will be implemented when llama-cpp-2 API stabilizes
-        Err("Local LLM inference is currently in development. Please use Ollama or a cloud provider.".to_string())
+        let params = LlamaParams::default();
+
+        let model = LlamaModel::load_from_file(&self.model_path, params)
+            .map_err(|e| format!("Failed to load model: {}", e))?;
+
+        self.model = Some(Arc::new(model));
+        Ok(())
     }
 
     /// Check if model is loaded
     pub fn is_loaded(&self) -> bool {
-        false // Not yet implemented
+        self.model.is_some()
+    }
+
+    /// Ensure model is loaded, loading it if necessary
+    fn ensure_loaded(&mut self) -> Result<(), String> {
+        if self.model.is_none() {
+            self.load_model()?;
+        }
+        Ok(())
     }
 }
 
@@ -42,8 +58,41 @@ impl AIProvider for LocalProvider {
         self.model_path.exists()
     }
 
-    async fn complete(&self, _messages: Vec<AIMessage>) -> Result<String, String> {
-        Err("Local LLM inference is currently in development. Please use Ollama or a cloud provider for now.".to_string())
+    async fn complete(&self, messages: Vec<AIMessage>) -> Result<String, String> {
+        let model = self.model.as_ref()
+            .ok_or("Model not loaded. Please wait while the model loads...")?;
+
+        let prompt = format_messages_for_model(&self.model_type, &messages);
+
+        // Create session for this completion
+        let mut session = model.create_session(SessionParams::default())
+            .map_err(|e| format!("Failed to create session: {}", e))?;
+
+        // Feed the prompt
+        session.advance_context(&prompt)
+            .map_err(|e| format!("Failed to process prompt: {}", e))?;
+
+        // Generate completion with reasonable defaults
+        let max_tokens = 512;
+        let sampler = StandardSampler::default();
+
+        let completions = session.start_completing_with(sampler, max_tokens)
+            .map_err(|e| format!("Failed to start completion: {}", e))?;
+
+        // Collect tokens into response
+        let mut result = String::new();
+        for token in completions.into_strings() {
+            // Stop at end-of-turn markers
+            if token.contains("<|end|>") ||
+               token.contains("<|im_end|>") ||
+               token.contains("</s>") ||
+               token.contains("<|eot_id|>") {
+                break;
+            }
+            result.push_str(&token);
+        }
+
+        Ok(result.trim().to_string())
     }
 
     fn name(&self) -> &'static str {
@@ -51,29 +100,82 @@ impl AIProvider for LocalProvider {
     }
 }
 
-/// Format messages into a prompt suitable for the local model
-#[allow(dead_code)]
-fn format_messages_to_prompt(messages: &[AIMessage]) -> String {
+/// Format messages into a prompt suitable for the specific model type
+fn format_messages_for_model(model_type: &LocalModel, messages: &[AIMessage]) -> String {
+    match model_type {
+        LocalModel::TinyLlama1_1B => format_tinyllama(messages),
+        LocalModel::Phi3Mini => format_phi3(messages),
+        LocalModel::Qwen2_0_5B => format_chatml(messages),
+        LocalModel::SmolLM135M => format_chatml(messages),
+    }
+}
+
+/// TinyLlama chat format
+fn format_tinyllama(messages: &[AIMessage]) -> String {
     let mut prompt = String::new();
 
     for msg in messages {
         match msg.role.as_str() {
             "system" => {
-                prompt.push_str(&format!("### System:\n{}\n\n", msg.content));
+                prompt.push_str(&format!("<|system|>\n{}</s>\n", msg.content));
             }
             "user" => {
-                prompt.push_str(&format!("### User:\n{}\n\n", msg.content));
+                prompt.push_str(&format!("<|user|>\n{}</s>\n", msg.content));
             }
             "assistant" => {
-                prompt.push_str(&format!("### Assistant:\n{}\n\n", msg.content));
+                prompt.push_str(&format!("<|assistant|>\n{}</s>\n", msg.content));
             }
-            _ => {
-                prompt.push_str(&format!("{}\n\n", msg.content));
-            }
+            _ => {}
         }
     }
 
-    prompt.push_str("### Assistant:\n");
+    prompt.push_str("<|assistant|>\n");
+    prompt
+}
+
+/// Phi-3 chat format
+fn format_phi3(messages: &[AIMessage]) -> String {
+    let mut prompt = String::new();
+
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => {
+                prompt.push_str(&format!("<|system|>\n{}<|end|>\n", msg.content));
+            }
+            "user" => {
+                prompt.push_str(&format!("<|user|>\n{}<|end|>\n", msg.content));
+            }
+            "assistant" => {
+                prompt.push_str(&format!("<|assistant|>\n{}<|end|>\n", msg.content));
+            }
+            _ => {}
+        }
+    }
+
+    prompt.push_str("<|assistant|>\n");
+    prompt
+}
+
+/// ChatML format (used by Qwen2, SmolLM, and many others)
+fn format_chatml(messages: &[AIMessage]) -> String {
+    let mut prompt = String::new();
+
+    for msg in messages {
+        match msg.role.as_str() {
+            "system" => {
+                prompt.push_str(&format!("<|im_start|>system\n{}<|im_end|>\n", msg.content));
+            }
+            "user" => {
+                prompt.push_str(&format!("<|im_start|>user\n{}<|im_end|>\n", msg.content));
+            }
+            "assistant" => {
+                prompt.push_str(&format!("<|im_start|>assistant\n{}<|im_end|>\n", msg.content));
+            }
+            _ => {}
+        }
+    }
+
+    prompt.push_str("<|im_start|>assistant\n");
     prompt
 }
 

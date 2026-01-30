@@ -58,5 +58,5 @@ urlencoding = "2"
 jmap-client = "0.3"
 # Async trait for AI providers
 async-trait = "0.1"
-# Note: Local LLM support via llama-cpp-2 is planned but not yet integrated
-# due to API instability. Download infrastructure is ready.
+# Local LLM inference via llama.cpp
+llama_cpp = "0.3"

@@ -1271,7 +1271,7 @@ fn create_ai_provider(config: &AIConfig) -> Result<Box<dyn ai::AIProvider>, Stri
             if !model_path.exists() {
                 return Err("Lokales Modell nicht heruntergeladen. Bitte zuerst herunterladen.".to_string());
             }
-            let provider = ai::LocalProvider::new(model_path);
+            let mut provider = ai::LocalProvider::new(model_path, config.local_model.clone());
             provider.load_model()?;
             Ok(Box::new(provider))
         }
