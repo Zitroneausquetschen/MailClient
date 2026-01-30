@@ -59,4 +59,4 @@ jmap-client = "0.3"
 # Async trait for AI providers
 async-trait = "0.1"
 # Local LLM inference via llama.cpp
-llama_cpp = "0.3"
+llama-cpp-2 = "0.1"

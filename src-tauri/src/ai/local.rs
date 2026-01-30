@@ -3,23 +3,31 @@
 
 use async_trait::async_trait;
 use std::path::PathBuf;
-use std::sync::Arc;
-use llama_cpp::{LlamaModel, LlamaParams, SessionParams, standard_sampler::StandardSampler};
+use std::num::NonZeroU32;
+use llama_cpp_2::llama_backend::LlamaBackend;
+use llama_cpp_2::model::LlamaModel;
+use llama_cpp_2::model::params::LlamaModelParams;
+use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::llama_batch::LlamaBatch;
+use llama_cpp_2::sampling::LlamaSampler;
+use llama_cpp_2::token::LlamaToken;
 use crate::ai::provider::{AIProvider, AIMessage, LocalModel};
 
 /// Local LLM provider using llama.cpp for GGUF model inference
 pub struct LocalProvider {
     model_path: PathBuf,
-    model: Option<Arc<LlamaModel>>,
     model_type: LocalModel,
+    backend: Option<LlamaBackend>,
+    model: Option<LlamaModel>,
 }
 
 impl LocalProvider {
     pub fn new(model_path: PathBuf, model_type: LocalModel) -> Self {
         Self {
             model_path,
-            model: None,
             model_type,
+            backend: None,
+            model: None,
         }
     }
 
@@ -29,26 +37,26 @@ impl LocalProvider {
             return Err("Model file not found. Please download the model first.".to_string());
         }
 
-        let params = LlamaParams::default();
+        // Initialize backend
+        let backend = LlamaBackend::init()
+            .map_err(|e| format!("Failed to initialize llama backend: {}", e))?;
 
-        let model = LlamaModel::load_from_file(&self.model_path, params)
+        // Set up model parameters
+        let model_params = LlamaModelParams::default();
+
+        // Load the model
+        let model = LlamaModel::load_from_file(&backend, &self.model_path, &model_params)
             .map_err(|e| format!("Failed to load model: {}", e))?;
 
-        self.model = Some(Arc::new(model));
+        self.backend = Some(backend);
+        self.model = Some(model);
+
         Ok(())
     }
 
     /// Check if model is loaded
     pub fn is_loaded(&self) -> bool {
         self.model.is_some()
-    }
-
-    /// Ensure model is loaded, loading it if necessary
-    fn ensure_loaded(&mut self) -> Result<(), String> {
-        if self.model.is_none() {
-            self.load_model()?;
-        }
-        Ok(())
     }
 }
 
@@ -59,37 +67,83 @@ impl AIProvider for LocalProvider {
     }
 
     async fn complete(&self, messages: Vec<AIMessage>) -> Result<String, String> {
+        let backend = self.backend.as_ref()
+            .ok_or("Backend not initialized. Please load the model first.")?;
         let model = self.model.as_ref()
             .ok_or("Model not loaded. Please wait while the model loads...")?;
 
         let prompt = format_messages_for_model(&self.model_type, &messages);
 
-        // Create session for this completion
-        let mut session = model.create_session(SessionParams::default())
-            .map_err(|e| format!("Failed to create session: {}", e))?;
+        // Create context
+        let ctx_params = LlamaContextParams::default()
+            .with_n_ctx(NonZeroU32::new(2048));
 
-        // Feed the prompt
-        session.advance_context(&prompt)
-            .map_err(|e| format!("Failed to process prompt: {}", e))?;
+        let mut ctx = model.new_context(backend, ctx_params)
+            .map_err(|e| format!("Failed to create context: {}", e))?;
 
-        // Generate completion with reasonable defaults
-        let max_tokens = 512;
-        let sampler = StandardSampler::default();
+        // Tokenize the prompt
+        let tokens = model.str_to_token(&prompt, llama_cpp_2::model::AddBos::Always)
+            .map_err(|e| format!("Failed to tokenize: {}", e))?;
 
-        let completions = session.start_completing_with(sampler, max_tokens)
-            .map_err(|e| format!("Failed to start completion: {}", e))?;
+        // Create batch and add tokens
+        let mut batch = LlamaBatch::new(2048, 1);
 
-        // Collect tokens into response
+        for (i, token) in tokens.iter().enumerate() {
+            let is_last = i == tokens.len() - 1;
+            batch.add(*token, i as i32, &[0], is_last)
+                .map_err(|e| format!("Failed to add token to batch: {}", e))?;
+        }
+
+        // Decode the prompt
+        ctx.decode(&mut batch)
+            .map_err(|e| format!("Failed to decode prompt: {}", e))?;
+
+        // Set up sampler for generation
+        let mut sampler = LlamaSampler::chain_simple([
+            LlamaSampler::temp(0.7),
+            LlamaSampler::top_p(0.9, 1),
+            LlamaSampler::dist(42),
+        ]);
+
+        // Generate tokens
         let mut result = String::new();
-        for token in completions.into_strings() {
-            // Stop at end-of-turn markers
-            if token.contains("<|end|>") ||
-               token.contains("<|im_end|>") ||
-               token.contains("</s>") ||
-               token.contains("<|eot_id|>") {
+        let mut n_cur = tokens.len();
+        let max_tokens = 512;
+        let eos_token = model.token_eos();
+
+        for _ in 0..max_tokens {
+            // Sample next token
+            let token = sampler.sample(&ctx, -1);
+
+            // Check for end of stream
+            if token == eos_token {
                 break;
             }
-            result.push_str(&token);
+
+            // Convert token to text
+            let piece = model.token_to_str(token, llama_cpp_2::model::Special::Tokenize)
+                .map_err(|e| format!("Failed to convert token: {}", e))?;
+
+            // Check for end-of-turn markers
+            if piece.contains("<|end|>") ||
+               piece.contains("<|im_end|>") ||
+               piece.contains("</s>") ||
+               piece.contains("<|eot_id|>") {
+                break;
+            }
+
+            result.push_str(&piece);
+
+            // Prepare next batch
+            batch.clear();
+            batch.add(token, n_cur as i32, &[0], true)
+                .map_err(|e| format!("Failed to add token: {}", e))?;
+
+            n_cur += 1;
+
+            // Decode
+            ctx.decode(&mut batch)
+                .map_err(|e| format!("Failed to decode: {}", e))?;
         }
 
         Ok(result.trim().to_string())
@@ -239,7 +293,7 @@ pub async fn download_model(
     });
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(3600)) // 1 hour timeout for large files
+        .timeout(std::time::Duration::from_secs(3600))
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -262,7 +316,6 @@ pub async fn download_model(
         status: "Downloading...".to_string(),
     });
 
-    // Create temp file for download
     let temp_path = target_path.with_extension("tmp");
     let mut file = tokio::fs::File::create(&temp_path)
         .await
@@ -300,7 +353,6 @@ pub async fn download_model(
     file.flush().await.map_err(|e| format!("Failed to flush: {}", e))?;
     drop(file);
 
-    // Rename temp file to final path
     tokio::fs::rename(&temp_path, &target_path)
         .await
         .map_err(|e| format!("Failed to finalize download: {}", e))?;
