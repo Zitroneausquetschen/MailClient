@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::imap::client::{EmailHeader, Email, Attachment};
+use crate::ai::categorizer::{EmailCategory, get_default_categories};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,8 +107,48 @@ impl EmailCache {
 
             CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder);
             CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date_timestamp DESC);
+
+            -- Categories table
+            CREATE TABLE IF NOT EXISTS categories (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                color TEXT NOT NULL,
+                icon TEXT,
+                is_system INTEGER DEFAULT 0,
+                sort_order INTEGER DEFAULT 0
+            );
+
+            -- Email categories mapping
+            CREATE TABLE IF NOT EXISTS email_categories (
+                folder TEXT NOT NULL,
+                uid INTEGER NOT NULL,
+                category_id TEXT NOT NULL,
+                confidence REAL DEFAULT 0.5,
+                is_user_override INTEGER DEFAULT 0,
+                categorized_at INTEGER NOT NULL,
+                PRIMARY KEY (folder, uid)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_email_categories_category ON email_categories(category_id);
             "
         ).map_err(|e| format!("Failed to create tables: {}", e))?;
+
+        // Initialize default categories if table is empty
+        let category_count: i32 = db.query_row(
+            "SELECT COUNT(*) FROM categories",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        if category_count == 0 {
+            let default_categories = get_default_categories();
+            for cat in default_categories {
+                let _ = db.execute(
+                    "INSERT OR IGNORE INTO categories (id, name, color, icon, is_system, sort_order) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![cat.id, cat.name, cat.color, cat.icon, cat.is_system as i32, cat.sort_order],
+                );
+            }
+        }
 
         Ok(Self {
             db,
@@ -490,6 +531,205 @@ impl EmailCache {
         ).optional().map_err(|e| format!("Failed to check email body: {}", e))?.unwrap_or(false);
 
         Ok(has_body)
+    }
+
+    // === Category Methods ===
+
+    /// Get all categories
+    pub fn get_categories(&self) -> Result<Vec<EmailCategory>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT id, name, color, icon, is_system, sort_order FROM categories ORDER BY sort_order"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(EmailCategory {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                icon: row.get(3)?,
+                is_system: row.get::<_, i32>(4)? != 0,
+                sort_order: row.get(5)?,
+            })
+        }).map_err(|e| format!("Failed to query categories: {}", e))?;
+
+        let mut categories = Vec::new();
+        for row in rows {
+            categories.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(categories)
+    }
+
+    /// Create a new category
+    pub fn create_category(&self, name: &str, color: &str, icon: Option<&str>) -> Result<EmailCategory, String> {
+        let id = format!("custom_{}", uuid::Uuid::new_v4().to_string().replace("-", "")[..8].to_string());
+
+        // Get max sort order
+        let max_order: i32 = self.db.query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) FROM categories",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0);
+
+        self.db.execute(
+            "INSERT INTO categories (id, name, color, icon, is_system, sort_order) VALUES (?1, ?2, ?3, ?4, 0, ?5)",
+            params![id, name, color, icon, max_order + 1],
+        ).map_err(|e| format!("Failed to create category: {}", e))?;
+
+        Ok(EmailCategory {
+            id,
+            name: name.to_string(),
+            color: color.to_string(),
+            icon: icon.map(|s| s.to_string()),
+            is_system: false,
+            sort_order: max_order + 1,
+        })
+    }
+
+    /// Update a category
+    pub fn update_category(&self, id: &str, name: &str, color: &str, icon: Option<&str>) -> Result<(), String> {
+        self.db.execute(
+            "UPDATE categories SET name = ?1, color = ?2, icon = ?3 WHERE id = ?4 AND is_system = 0",
+            params![name, color, icon, id],
+        ).map_err(|e| format!("Failed to update category: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Delete a category (only non-system)
+    pub fn delete_category(&self, id: &str) -> Result<(), String> {
+        // First, remove all email associations
+        self.db.execute(
+            "DELETE FROM email_categories WHERE category_id = ?1",
+            params![id],
+        ).map_err(|e| format!("Failed to remove email categories: {}", e))?;
+
+        // Then delete the category
+        self.db.execute(
+            "DELETE FROM categories WHERE id = ?1 AND is_system = 0",
+            params![id],
+        ).map_err(|e| format!("Failed to delete category: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Get category for an email
+    pub fn get_email_category(&self, folder: &str, uid: u32) -> Result<Option<String>, String> {
+        let category_id = self.db.query_row(
+            "SELECT category_id FROM email_categories WHERE folder = ?1 AND uid = ?2",
+            params![folder, uid],
+            |row| row.get::<_, String>(0),
+        ).optional().map_err(|e| format!("Failed to get email category: {}", e))?;
+
+        Ok(category_id)
+    }
+
+    /// Set category for an email
+    pub fn set_email_category(&self, folder: &str, uid: u32, category_id: &str, confidence: f32, is_user_override: bool) -> Result<(), String> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        self.db.execute(
+            "INSERT OR REPLACE INTO email_categories (folder, uid, category_id, confidence, is_user_override, categorized_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![folder, uid, category_id, confidence, is_user_override as i32, now],
+        ).map_err(|e| format!("Failed to set email category: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Get uncategorized email UIDs in a folder
+    pub fn get_uncategorized_emails(&self, folder: &str, limit: u32) -> Result<Vec<u32>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT e.uid FROM emails e
+             LEFT JOIN email_categories ec ON e.folder = ec.folder AND e.uid = ec.uid
+             WHERE e.folder = ?1 AND ec.uid IS NULL
+             ORDER BY e.date_timestamp DESC
+             LIMIT ?2"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map(params![folder, limit], |row| {
+            row.get::<_, u32>(0)
+        }).map_err(|e| format!("Failed to query uncategorized emails: {}", e))?;
+
+        let mut uids = Vec::new();
+        for row in rows {
+            uids.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(uids)
+    }
+
+    /// Get emails by category
+    pub fn get_emails_by_category(&self, category_id: &str) -> Result<Vec<EmailHeader>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT e.uid, e.subject, e.from_addr, e.to_addr, e.date, e.is_read, e.has_attachments, e.folder
+             FROM emails e
+             JOIN email_categories ec ON e.folder = ec.folder AND e.uid = ec.uid
+             WHERE ec.category_id = ?1
+             ORDER BY e.date_timestamp DESC
+             LIMIT 200"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map(params![category_id], |row| {
+            Ok(EmailHeader {
+                uid: row.get(0)?,
+                subject: row.get(1)?,
+                from: row.get(2)?,
+                to: row.get(3)?,
+                date: row.get(4)?,
+                is_read: row.get::<_, i32>(5)? != 0,
+                is_flagged: false,
+                is_answered: false,
+                is_draft: false,
+                flags: Vec::new(),
+                has_attachments: row.get::<_, i32>(6)? != 0,
+            })
+        }).map_err(|e| format!("Failed to query emails by category: {}", e))?;
+
+        let mut headers = Vec::new();
+        for row in rows {
+            headers.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(headers)
+    }
+
+    /// Get category counts (for badges)
+    pub fn get_category_counts(&self, folder: &str) -> Result<Vec<(String, u32)>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT ec.category_id, COUNT(*) as cnt
+             FROM email_categories ec
+             JOIN emails e ON ec.folder = e.folder AND ec.uid = e.uid
+             WHERE ec.folder = ?1 AND e.is_read = 0
+             GROUP BY ec.category_id"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map(params![folder], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?))
+        }).map_err(|e| format!("Failed to query category counts: {}", e))?;
+
+        let mut counts = Vec::new();
+        for row in rows {
+            counts.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(counts)
+    }
+
+    /// Get uncategorized count
+    pub fn get_uncategorized_count(&self, folder: &str) -> Result<u32, String> {
+        let count: u32 = self.db.query_row(
+            "SELECT COUNT(*) FROM emails e
+             LEFT JOIN email_categories ec ON e.folder = ec.folder AND e.uid = ec.uid
+             WHERE e.folder = ?1 AND ec.uid IS NULL",
+            params![folder],
+            |row| row.get(0),
+        ).map_err(|e| format!("Failed to count uncategorized emails: {}", e))?;
+
+        Ok(count)
     }
 }
 

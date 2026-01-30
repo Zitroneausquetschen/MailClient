@@ -1,6 +1,6 @@
 [package]
 name = "mailclient"
-version = "0.3.2"
+version = "0.3.4"
 description = "E-Mail Client für MailCow"
 authors = [""]
 edition = "2021"
@@ -56,3 +56,7 @@ uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
 # JMAP support
 jmap-client = "0.3"
+# Async trait for AI providers
+async-trait = "0.1"
+# Note: Local LLM support via llama-cpp-2 is planned but not yet integrated
+# due to API instability. Download infrastructure is ready.

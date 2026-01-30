@@ -1,3 +1,4 @@
+mod ai;
 mod autoconfig;
 mod cache;
 mod caldav;
@@ -8,6 +9,7 @@ mod sieve;
 mod smtp;
 mod storage;
 
+use ai::{AIConfig, AIProviderType, LocalModel, EmailAnalysis, ExtractedDeadline};
 use autoconfig::AutoConfigResult;
 use cache::{EmailCache, CacheStats};
 use caldav::client::{CalDavClient, Calendar, CalendarEvent, CalDavTask};
@@ -21,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::io::Write;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{State, Emitter};
 use tokio::sync::Mutex;
 
 fn log_to_file(msg: &str) {
@@ -1259,6 +1261,393 @@ async fn jmap_deactivate_sieve_scripts(state: State<'_, AppState>, account_id: S
     client.deactivate_sieve_scripts().await
 }
 
+// AI commands
+
+/// Helper function to create AI provider from config
+fn create_ai_provider(config: &AIConfig) -> Result<Box<dyn ai::AIProvider>, String> {
+    match config.provider_type {
+        AIProviderType::Local => {
+            let model_path = ai::get_model_path(&config.local_model)?;
+            if !model_path.exists() {
+                return Err("Lokales Modell nicht heruntergeladen. Bitte zuerst herunterladen.".to_string());
+            }
+            let provider = ai::LocalProvider::new(model_path);
+            provider.load_model()?;
+            Ok(Box::new(provider))
+        }
+        AIProviderType::Ollama => {
+            Ok(Box::new(ai::ollama::OllamaProvider::new(
+                config.ollama_url.clone(),
+                config.ollama_model.clone(),
+            )))
+        }
+        AIProviderType::OpenAI => {
+            Ok(Box::new(ai::openai::OpenAIProvider::new(
+                config.openai_api_key.clone(),
+                config.openai_model.clone(),
+            )))
+        }
+        AIProviderType::Anthropic => {
+            Ok(Box::new(ai::anthropic::AnthropicProvider::new(
+                config.anthropic_api_key.clone(),
+                config.anthropic_model.clone(),
+            )))
+        }
+        AIProviderType::CustomOpenAI => {
+            Ok(Box::new(ai::openai::OpenAIProvider::with_base_url(
+                config.custom_api_key.clone(),
+                config.custom_model.clone(),
+                config.custom_api_url.clone(),
+            )))
+        }
+        AIProviderType::Disabled => {
+            Err("AI ist deaktiviert".to_string())
+        }
+    }
+}
+
+#[tauri::command]
+fn get_ai_config() -> Result<AIConfig, String> {
+    storage::load_ai_config()
+}
+
+#[tauri::command]
+fn save_ai_config(config: AIConfig) -> Result<(), String> {
+    storage::save_ai_config(&config)
+}
+
+#[tauri::command]
+async fn test_ai_connection(config: AIConfig) -> Result<String, String> {
+    let provider = create_ai_provider(&config)?;
+
+    if !provider.is_available().await {
+        return Err("Provider nicht verfügbar".to_string());
+    }
+
+    // Send a simple test message
+    let messages = vec![ai::AIMessage {
+        role: "user".to_string(),
+        content: "Antworte nur mit 'OK' wenn du funktionierst.".to_string(),
+    }];
+
+    provider.complete(messages).await.map(|response| {
+        format!("Verbindung erfolgreich! Antwort: {}", response.trim())
+    })
+}
+
+#[tauri::command]
+async fn ai_analyze_email(subject: String, from: String, body: String) -> Result<EmailAnalysis, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    ai::analyze_email(provider.as_ref(), &subject, &from, &body).await
+}
+
+#[tauri::command]
+async fn ai_summarize_email(subject: String, body: String) -> Result<String, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    ai::summarize_email(provider.as_ref(), &subject, &body).await
+}
+
+#[tauri::command]
+async fn ai_extract_deadlines(subject: String, body: String) -> Result<Vec<ExtractedDeadline>, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    ai::extract_deadlines(provider.as_ref(), &subject, &body).await
+}
+
+#[tauri::command]
+async fn ai_calculate_importance(subject: String, from: String, body: String) -> Result<(u8, String), String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    ai::calculate_importance(provider.as_ref(), &subject, &from, &body).await
+}
+
+#[tauri::command]
+async fn list_ollama_models(base_url: String) -> Result<Vec<String>, String> {
+    ai::ollama::list_ollama_models(&base_url).await
+}
+
+#[tauri::command]
+fn get_openai_models() -> Vec<(&'static str, &'static str)> {
+    ai::openai::openai_models()
+}
+
+#[tauri::command]
+fn get_anthropic_models() -> Vec<(&'static str, &'static str)> {
+    ai::anthropic::anthropic_models()
+}
+
+// Local model commands
+#[derive(serde::Serialize)]
+struct LocalModelInfo {
+    id: String,
+    name: String,
+    size_mb: u64,
+    downloaded: bool,
+    file_size: u64,
+}
+
+#[tauri::command]
+fn get_local_models_status() -> Result<Vec<LocalModelInfo>, String> {
+    let models_info = ai::get_downloaded_models_info()?;
+
+    Ok(models_info.into_iter().map(|(model, downloaded, file_size)| {
+        LocalModelInfo {
+            id: format!("{:?}", model).to_lowercase(),
+            name: model.display_name().to_string(),
+            size_mb: model.file_size_mb(),
+            downloaded,
+            file_size,
+        }
+    }).collect())
+}
+
+#[tauri::command]
+fn is_local_model_downloaded(model_id: String) -> Result<bool, String> {
+    let model = parse_local_model(&model_id)?;
+    ai::is_model_downloaded(&model)
+}
+
+#[tauri::command]
+async fn download_local_model(app: tauri::AppHandle, model_id: String) -> Result<String, String> {
+    let model = parse_local_model(&model_id)?;
+
+    let app_handle = app.clone();
+    let path = ai::download_model(&model, move |progress| {
+        let _ = app_handle.emit("local-model-download-progress", &progress);
+    }).await?;
+
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn delete_local_model(model_id: String) -> Result<(), String> {
+    let model = parse_local_model(&model_id)?;
+    ai::delete_model(&model)
+}
+
+fn parse_local_model(model_id: &str) -> Result<LocalModel, String> {
+    match model_id {
+        "smollm135m" | "smol_l_m135_m" => Ok(LocalModel::SmolLM135M),
+        "qwen2_0_5b" | "qwen20_5b" => Ok(LocalModel::Qwen2_0_5B),
+        "tinyllama1_1b" | "tiny_llama1_1b" => Ok(LocalModel::TinyLlama1_1B),
+        "phi3mini" | "phi3_mini" => Ok(LocalModel::Phi3Mini),
+        _ => Err(format!("Unknown model: {}", model_id)),
+    }
+}
+
+// === Category Commands ===
+
+#[tauri::command]
+fn get_categories(account_id: String) -> Result<Vec<ai::EmailCategory>, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.get_categories()
+}
+
+#[tauri::command]
+fn create_category(account_id: String, name: String, color: String, icon: Option<String>) -> Result<ai::EmailCategory, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.create_category(&name, &color, icon.as_deref())
+}
+
+#[tauri::command]
+fn update_category(account_id: String, id: String, name: String, color: String, icon: Option<String>) -> Result<(), String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.update_category(&id, &name, &color, icon.as_deref())
+}
+
+#[tauri::command]
+fn delete_category(account_id: String, id: String) -> Result<(), String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.delete_category(&id)
+}
+
+#[tauri::command]
+fn get_email_category(account_id: String, folder: String, uid: u32) -> Result<Option<String>, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.get_email_category(&folder, uid)
+}
+
+#[tauri::command]
+fn set_email_category(account_id: String, folder: String, uid: u32, category_id: String) -> Result<(), String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.set_email_category(&folder, uid, &category_id, 1.0, true)
+}
+
+#[tauri::command]
+fn get_emails_by_category(account_id: String, category_id: String) -> Result<Vec<imap::client::EmailHeader>, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.get_emails_by_category(&category_id)
+}
+
+#[tauri::command]
+fn get_category_counts(account_id: String, folder: String) -> Result<Vec<(String, u32)>, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.get_category_counts(&folder)
+}
+
+#[tauri::command]
+fn get_uncategorized_count(account_id: String, folder: String) -> Result<u32, String> {
+    let cache = cache::EmailCache::new(&account_id)?;
+    cache.get_uncategorized_count(&folder)
+}
+
+#[tauri::command]
+async fn categorize_email_ai(account_id: String, folder: String, uid: u32, subject: String, from: String, body: String) -> Result<ai::CategoryResult, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    let cache = cache::EmailCache::new(&account_id)?;
+    let categories = cache.get_categories()?;
+
+    let result = ai::categorize_email(
+        provider.as_ref(),
+        &subject,
+        &from,
+        &body,
+        &categories,
+    ).await?;
+
+    // Save the result
+    cache.set_email_category(&folder, uid, &result.category_id, result.confidence, false)?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn categorize_emails_batch(account_id: String, folder: String) -> Result<u32, String> {
+    let config = storage::load_ai_config()?;
+    if config.provider_type == AIProviderType::Disabled {
+        return Ok(0);
+    }
+
+    let provider = create_ai_provider(&config)?;
+    let cache = cache::EmailCache::new(&account_id)?;
+    let categories = cache.get_categories()?;
+
+    // Get uncategorized emails (max 10 at a time)
+    let uncategorized = cache.get_uncategorized_emails(&folder, 10)?;
+
+    let mut categorized = 0;
+    for uid in uncategorized {
+        // Get email details from cache
+        if let Ok(Some(email)) = cache.get_email(&folder, uid) {
+            let body_preview = if email.body_text.len() > 500 {
+                &email.body_text[..500]
+            } else {
+                &email.body_text
+            };
+
+            if let Ok(result) = ai::categorize_email(
+                provider.as_ref(),
+                &email.subject,
+                &email.from,
+                body_preview,
+                &categories,
+            ).await {
+                let _ = cache.set_email_category(&folder, uid, &result.category_id, result.confidence, false);
+                categorized += 1;
+            }
+        }
+    }
+
+    Ok(categorized)
+}
+
+// === AI Chat Commands ===
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChatContext {
+    email_uid: Option<u32>,
+    folder: Option<String>,
+    email_subject: Option<String>,
+    email_from: Option<String>,
+    email_body: Option<String>,
+}
+
+#[tauri::command]
+async fn ai_chat(messages: Vec<ai::AIMessage>, context: Option<ChatContext>) -> Result<String, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+
+    // Build system message with context
+    let mut all_messages = Vec::new();
+
+    let mut system_content = "Du bist ein hilfreicher E-Mail-Assistent. Du hilfst beim Verstehen, Beantworten und Organisieren von E-Mails. Antworte auf Deutsch.".to_string();
+
+    if let Some(ctx) = &context {
+        if let Some(subject) = &ctx.email_subject {
+            system_content.push_str(&format!("\n\nAktuelle E-Mail:\nBetreff: {}", subject));
+        }
+        if let Some(from) = &ctx.email_from {
+            system_content.push_str(&format!("\nVon: {}", from));
+        }
+        if let Some(body) = &ctx.email_body {
+            let truncated = if body.len() > 2000 { &body[..2000] } else { body };
+            system_content.push_str(&format!("\n\nInhalt:\n{}", truncated));
+        }
+    }
+
+    all_messages.push(ai::AIMessage {
+        role: "system".to_string(),
+        content: system_content,
+    });
+
+    all_messages.extend(messages);
+
+    provider.complete(all_messages).await
+}
+
+#[tauri::command]
+async fn ai_generate_reply(account_id: String, folder: String, uid: u32, tone: String) -> Result<String, String> {
+    let config = storage::load_ai_config()?;
+    let provider = create_ai_provider(&config)?;
+    let cache = cache::EmailCache::new(&account_id)?;
+
+    let email = cache.get_email(&folder, uid)?
+        .ok_or("E-Mail nicht im Cache gefunden")?;
+
+    let tone_desc = match tone.as_str() {
+        "formal" => "formell und professionell",
+        "friendly" => "freundlich und persönlich",
+        "brief" => "kurz und prägnant",
+        _ => "neutral und höflich",
+    };
+
+    let system_prompt = format!(
+        r#"Du bist ein E-Mail-Assistent. Erstelle eine Antwort auf die folgende E-Mail.
+Der Ton soll {} sein.
+Antworte auf Deutsch.
+Gib NUR den Antworttext zurück, keine Erklärungen."#,
+        tone_desc
+    );
+
+    let body_truncated = if email.body_text.len() > 2000 {
+        &email.body_text[..2000]
+    } else {
+        &email.body_text
+    };
+
+    let user_message = format!(
+        "Von: {}\nBetreff: {}\n\n{}",
+        email.from, email.subject, body_truncated
+    );
+
+    let messages = vec![
+        ai::AIMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        },
+        ai::AIMessage {
+            role: "user".to_string(),
+            content: user_message,
+        },
+    ];
+
+    provider.complete(messages).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1374,6 +1763,37 @@ pub fn run() {
             jmap_delete_sieve_script,
             jmap_activate_sieve_script,
             jmap_deactivate_sieve_scripts,
+            // AI commands
+            get_ai_config,
+            save_ai_config,
+            test_ai_connection,
+            ai_analyze_email,
+            ai_summarize_email,
+            ai_extract_deadlines,
+            ai_calculate_importance,
+            list_ollama_models,
+            get_openai_models,
+            get_anthropic_models,
+            // Local model commands
+            get_local_models_status,
+            is_local_model_downloaded,
+            download_local_model,
+            delete_local_model,
+            // Category commands
+            get_categories,
+            create_category,
+            update_category,
+            delete_category,
+            get_email_category,
+            set_email_category,
+            get_emails_by_category,
+            get_category_counts,
+            get_uncategorized_count,
+            categorize_email_ai,
+            categorize_emails_batch,
+            // AI Chat commands
+            ai_chat,
+            ai_generate_reply,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

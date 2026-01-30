@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use crate::ai::AIConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -257,6 +258,46 @@ pub fn delete_jmap_account(account_id: &str) -> Result<(), String> {
 
     fs::write(&config_path, content)
         .map_err(|e| format!("Failed to write JMAP config: {}", e))?;
+
+    Ok(())
+}
+
+// AI config storage functions
+fn get_ai_config_path() -> Result<PathBuf, String> {
+    let config_dir = dirs::config_dir()
+        .ok_or("Could not find config directory")?
+        .join("MailClient");
+
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    Ok(config_dir.join("ai_config.json"))
+}
+
+pub fn load_ai_config() -> Result<AIConfig, String> {
+    let config_path = get_ai_config_path()?;
+
+    if !config_path.exists() {
+        return Ok(AIConfig::default());
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read AI config: {}", e))?;
+
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse AI config: {}", e))
+}
+
+pub fn save_ai_config(config: &AIConfig) -> Result<(), String> {
+    let config_path = get_ai_config_path()?;
+
+    let content = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize AI config: {}", e))?;
+
+    fs::write(&config_path, content)
+        .map_err(|e| format!("Failed to write AI config: {}", e))?;
 
     Ok(())
 }

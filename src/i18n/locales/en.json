@@ -363,6 +363,33 @@
     "createTask": "Create task...",
     "createRule": "Create rule..."
   },
+  "categories": {
+    "all": "All",
+    "manage": "Manage categories",
+    "name": "Category name",
+    "color": "Color",
+    "icon": "Icon",
+    "system": "System",
+    "createNew": "Create New Category",
+    "addNew": "Add New Category",
+    "confirmDelete": "Are you sure you want to delete this category?"
+  },
+  "ai": {
+    "assistant": "AI Assistant",
+    "selectEmailHint": "Select an email to get started",
+    "askQuestionHint": "Ask a question or use the quick actions",
+    "inputPlaceholder": "Ask a question...",
+    "insertReply": "Insert as reply",
+    "quickActions": "Quick Actions",
+    "actions": {
+      "summarize": "Summarize",
+      "summarizePrompt": "Please summarize this email briefly:",
+      "replyFormal": "Formal Reply",
+      "replyFriendly": "Friendly Reply",
+      "replyBrief": "Brief Reply",
+      "changeCategory": "Change category..."
+    }
+  },
   "common": {
     "ok": "OK",
     "cancel": "Cancel",

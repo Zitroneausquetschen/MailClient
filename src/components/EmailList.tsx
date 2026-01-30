@@ -1,10 +1,11 @@
 import { useTranslation } from "react-i18next";
-import { EmailHeader } from "../types/mail";
+import { EmailHeader, EmailCategory } from "../types/mail";
 
-// Extended EmailHeader with optional JMAP fields
+// Extended EmailHeader with optional JMAP fields and category
 type ExtendedEmailHeader = EmailHeader & {
   jmapId?: string;
   preview?: string;
+  categoryId?: string;
 };
 
 interface Props {
@@ -18,6 +19,9 @@ interface Props {
   selectedUids?: Set<number>;
   onSelectionChange?: (uids: Set<number>) => void;
   multiSelectMode?: boolean;
+  // Category props
+  categories?: EmailCategory[];
+  emailCategories?: Map<number, string>; // uid -> categoryId
 }
 
 function formatDate(dateStr: string, locale: string, yesterdayText: string): string {
@@ -79,8 +83,13 @@ function EmailList({
   selectedUids,
   onSelectionChange,
   multiSelectMode = false,
+  categories = [],
+  emailCategories,
 }: Props) {
   const { t, i18n } = useTranslation();
+
+  // Create category lookup map
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
 
   if (loading && emails.length === 0) {
     return (
@@ -219,6 +228,20 @@ function EmailList({
             {email.isAnswered && (
               <span className="text-gray-400 flex-shrink-0 text-xs" title="Beantwortet">↩</span>
             )}
+            {/* Category badge */}
+            {emailCategories && emailCategories.get(email.uid) && (() => {
+              const categoryId = emailCategories.get(email.uid);
+              const category = categoryId ? categoryMap.get(categoryId) : undefined;
+              return category ? (
+                <span
+                  className="px-1.5 py-0.5 text-xs rounded-full text-white flex-shrink-0"
+                  style={{ backgroundColor: category.color }}
+                  title={category.name}
+                >
+                  {category.icon || category.name.charAt(0)}
+                </span>
+              ) : null;
+            })()}
             <span className="text-sm text-gray-700 truncate">
               {email.subject || "(Kein Betreff)"}
             </span>

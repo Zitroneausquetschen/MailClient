@@ -16,7 +16,10 @@ import AccountSettings from "./components/AccountSettings";
 import MainNavigation from "./components/MainNavigation";
 import UpdateChecker from "./components/UpdateChecker";
 import ContextMenu, { ContextMenuItem } from "./components/ContextMenu";
-import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount } from "./types/mail";
+import CategoryTabs from "./components/CategoryTabs";
+import CategoryManager from "./components/CategoryManager";
+import AIChatPanel from "./components/AIChatPanel";
+import { MailAccount, JmapAccount, Folder, EmailHeader, Email, OutgoingEmail, ConnectedAccount, SavedAccount, SieveRule, Attachment, JmapConnectedAccount, EmailCategory } from "./types/mail";
 import { playSentSound, playReceivedSound, playErrorSound } from "./utils/sounds";
 import { openComposerWindow } from "./utils/windows";
 
@@ -94,10 +97,65 @@ function App() {
   const [taskAccountId, setTaskAccountId] = useState<string>("");
   const [savedAccountsForTasks, setSavedAccountsForTasks] = useState<SavedAccount[]>([]);
 
+  // AI Category state
+  const [categories, setCategories] = useState<EmailCategory[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [emailCategories, setEmailCategories] = useState<Map<number, string>>(new Map());
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+
+  // AI Chat panel state
+  const [showAIChat, setShowAIChat] = useState(false);
+
   // Helper to set error and play sound
   const showError = (message: string) => {
     setError(message);
     playErrorSound();
+  };
+
+  // Load categories for the active account
+  const loadCategories = async (accountId: string) => {
+    try {
+      const cats = await invoke<EmailCategory[]>("get_categories", { accountId });
+      setCategories(cats.sort((a, b) => a.sortOrder - b.sortOrder));
+    } catch (e) {
+      console.error("Failed to load categories:", e);
+    }
+  };
+
+  // Load email categories for the current folder
+  const loadEmailCategories = async (accountId: string, folder: string, uids: number[]) => {
+    const categoryMap = new Map<number, string>();
+    try {
+      for (const uid of uids) {
+        const categoryId = await invoke<string | null>("get_email_category", {
+          accountId,
+          folder,
+          uid,
+        });
+        if (categoryId) {
+          categoryMap.set(uid, categoryId);
+        }
+      }
+      setEmailCategories(categoryMap);
+    } catch (e) {
+      console.error("Failed to load email categories:", e);
+    }
+  };
+
+  // Set email category (manual override)
+  const handleSetEmailCategory = async (uid: number, categoryId: string) => {
+    if (!activeAccountId) return;
+    try {
+      await invoke("set_email_category", {
+        accountId: activeAccountId,
+        folder: selectedFolder,
+        uid,
+        categoryId,
+      });
+      setEmailCategories((prev) => new Map(prev).set(uid, categoryId));
+    } catch (e) {
+      console.error("Failed to set email category:", e);
+    }
   };
 
   // Auto-connect saved accounts on startup
@@ -245,6 +303,8 @@ function App() {
         const inboxFolder = findInboxFolder(loadedFolders, isJmapAccountId(activeAccountId));
         await loadEmails(activeAccountId, inboxFolder);
         setSelectedFolder(inboxFolder);
+        // Load categories for the account
+        loadCategories(activeAccountId);
       }
     };
     loadAccountData();
@@ -542,6 +602,12 @@ function App() {
       }
 
       setEmails(headers);
+
+      // Load email categories for the emails
+      if (headers.length > 0 && !isJmapAccountId(accountId)) {
+        const uids = headers.map(h => h.uid);
+        loadEmailCategories(accountId, folder, uids);
+      }
 
       if (isCacheEnabled && headers.length > 0) {
         setSyncing(true);
@@ -1610,6 +1676,20 @@ function App() {
                     {t("sieve.filters", "Filters")}
                   </button>
                 )}
+
+                {/* AI Assistant Toggle */}
+                <button
+                  onClick={() => setShowAIChat(!showAIChat)}
+                  className={`px-3 py-1.5 text-sm rounded flex items-center gap-1 transition-colors ${
+                    showAIChat
+                      ? "bg-blue-100 text-blue-700"
+                      : "text-gray-600 hover:text-gray-800 hover:bg-gray-100"
+                  }`}
+                  title={t("ai.assistant", "AI Assistant")}
+                >
+                  <span>🤖</span>
+                  <span>{t("ai.assistant", "AI Assistant")}</span>
+                </button>
               </div>
             </header>
 
@@ -1644,8 +1724,18 @@ function App() {
                     />
                   </div>
 
-                  {/* Email list */}
+                  {/* Email list with category tabs */}
                   <div className="w-80 bg-white border-r overflow-y-auto flex flex-col">
+                    {/* Category Tabs */}
+                    {categories.length > 0 && (
+                      <CategoryTabs
+                        accountId={activeAccountId}
+                        selectedCategory={selectedCategory}
+                        onSelectCategory={setSelectedCategory}
+                        onManageCategories={() => setShowCategoryManager(true)}
+                      />
+                    )}
+
                     {searchResults !== null && (
                       <div className="px-4 py-2 bg-blue-50 border-b flex items-center justify-between">
                         <span className="text-sm text-blue-700">
@@ -1731,7 +1821,13 @@ function App() {
                     )}
                     <div className="flex-1 overflow-y-auto">
                       <EmailList
-                        emails={searchResults !== null ? searchResults : emails}
+                        emails={
+                          searchResults !== null
+                            ? searchResults
+                            : selectedCategory
+                            ? emails.filter((e) => emailCategories.get(e.uid) === selectedCategory)
+                            : emails
+                        }
                         selectedUid={selectedEmail?.uid}
                         onSelectEmail={handleSelectEmail}
                         onContextMenu={(email, x, y) => setContextMenu({ email, x, y })}
@@ -1740,6 +1836,8 @@ function App() {
                         selectedUids={selectedUids}
                         onSelectionChange={setSelectedUids}
                         multiSelectMode={multiSelectMode}
+                        categories={categories}
+                        emailCategories={emailCategories}
                       />
                     </div>
                   </div>
@@ -1761,6 +1859,21 @@ function App() {
                       </div>
                     )}
                   </div>
+
+                  {/* AI Chat Panel */}
+                  <AIChatPanel
+                    isOpen={showAIChat}
+                    onClose={() => setShowAIChat(false)}
+                    currentEmail={selectedEmail}
+                    accountId={activeAccountId}
+                    folder={selectedFolder}
+                    categories={categories}
+                    onCategoryChange={(categoryId) => {
+                      if (selectedEmail) {
+                        handleSetEmailCategory(selectedEmail.uid, categoryId);
+                      }
+                    }}
+                  />
                 </>
               ) : emailSubView === "compose" ? (
                 <div className="flex-1 bg-white overflow-y-auto">
@@ -1951,6 +2064,16 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Category Manager Modal */}
+      {activeAccountId && (
+        <CategoryManager
+          accountId={activeAccountId}
+          isOpen={showCategoryManager}
+          onClose={() => setShowCategoryManager(false)}
+          onCategoriesChanged={() => loadCategories(activeAccountId)}
+        />
       )}
 
       {/* Update Checker - checks automatically on app start */}

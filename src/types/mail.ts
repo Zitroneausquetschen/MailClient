@@ -357,3 +357,23 @@ export type AnySavedAccount = SavedAccount | SavedJmapAccount;
 export function isJmapAccount(account: AnySavedAccount): account is SavedJmapAccount {
   return 'protocol' in account && account.protocol === 'jmap';
 }
+
+// Email Category types
+export interface EmailCategory {
+  id: string;
+  name: string;
+  color: string;
+  icon?: string;
+  isSystem: boolean;
+  sortOrder: number;
+}
+
+export interface CategoryResult {
+  categoryId: string;
+  confidence: number;
+}
+
+// Extended EmailHeader with category
+export interface EmailHeaderWithCategory extends EmailHeader {
+  categoryId?: string;
+}

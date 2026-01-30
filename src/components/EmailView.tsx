@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Email, Folder, Attachment } from "../types/mail";
+import EmailAIPanel from "./EmailAIPanel";
 
 interface Props {
   email: Email;
@@ -141,6 +142,15 @@ function EmailView({ email, folders, onReply, onDelete, onMove, onDownloadAttach
             </div>
           </div>
         )}
+      </div>
+
+      {/* AI Analysis Panel */}
+      <div className="px-4">
+        <EmailAIPanel
+          subject={email.subject || ""}
+          from={email.from}
+          body={email.bodyText || ""}
+        />
       </div>
 
       {/* Body */}

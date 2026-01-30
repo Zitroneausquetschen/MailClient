@@ -363,6 +363,33 @@
     "createTask": "Aufgabe erstellen...",
     "createRule": "Regel erstellen..."
   },
+  "categories": {
+    "all": "Alle",
+    "manage": "Kategorien verwalten",
+    "name": "Kategoriename",
+    "color": "Farbe",
+    "icon": "Symbol",
+    "system": "System",
+    "createNew": "Neue Kategorie erstellen",
+    "addNew": "Kategorie hinzufügen",
+    "confirmDelete": "Möchten Sie diese Kategorie wirklich löschen?"
+  },
+  "ai": {
+    "assistant": "KI-Assistent",
+    "selectEmailHint": "Wähle eine E-Mail aus, um zu beginnen",
+    "askQuestionHint": "Stelle eine Frage oder nutze die Schnellaktionen",
+    "inputPlaceholder": "Frage stellen...",
+    "insertReply": "Als Antwort einfügen",
+    "quickActions": "Schnellaktionen",
+    "actions": {
+      "summarize": "Zusammenfassen",
+      "summarizePrompt": "Bitte fasse diese E-Mail kurz zusammen:",
+      "replyFormal": "Formelle Antwort",
+      "replyFriendly": "Freundliche Antwort",
+      "replyBrief": "Kurze Antwort",
+      "changeCategory": "Kategorie ändern..."
+    }
+  },
   "common": {
     "ok": "OK",
     "cancel": "Abbrechen",
