@@ -12,8 +12,10 @@ pub mod openai;
 pub mod anthropic;
 pub mod analyzer;
 pub mod categorizer;
+pub mod tools;
 
 pub use provider::*;
 pub use analyzer::*;
 pub use categorizer::{EmailCategory, CategoryResult, categorize_email, get_default_categories};
 pub use local::{LocalProvider, get_model_path, is_model_downloaded, download_model, delete_model, get_downloaded_models_info, DownloadProgress};
+pub use tools::{ToolCall, ToolResult, get_tools_description, parse_tool_call, execute_tool};

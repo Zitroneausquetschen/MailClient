@@ -731,6 +731,99 @@ impl EmailCache {
 
         Ok(count)
     }
+
+    // === AI Tool Support Methods ===
+
+    /// Search emails in a specific folder with limit
+    pub fn search_emails(&self, folder: &str, query: &str, limit: usize) -> Result<Vec<EmailHeader>, String> {
+        let search_pattern = format!("%{}%", query);
+
+        let mut stmt = self.db.prepare(
+            "SELECT uid, subject, from_addr, to_addr, date, is_read, has_attachments
+             FROM emails
+             WHERE folder = ?1 AND (subject LIKE ?2 OR from_addr LIKE ?2 OR to_addr LIKE ?2 OR body_text LIKE ?2)
+             ORDER BY date_timestamp DESC
+             LIMIT ?3"
+        ).map_err(|e| format!("Failed to prepare search query: {}", e))?;
+
+        let rows = stmt.query_map(params![folder, search_pattern, limit as i32], |row| {
+            Ok(EmailHeader {
+                uid: row.get(0)?,
+                subject: row.get(1)?,
+                from: row.get(2)?,
+                to: row.get(3)?,
+                date: row.get(4)?,
+                is_read: row.get::<_, i32>(5)? != 0,
+                is_flagged: false,
+                is_answered: false,
+                is_draft: false,
+                flags: Vec::new(),
+                has_attachments: row.get::<_, i32>(6)? != 0,
+            })
+        }).map_err(|e| format!("Failed to execute search: {}", e))?;
+
+        let mut headers = Vec::new();
+        for row in rows {
+            headers.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(headers)
+    }
+
+    /// Count unread emails, optionally in a specific folder
+    pub fn count_unread(&self, folder: Option<&str>) -> Result<u32, String> {
+        let count: u32 = if let Some(f) = folder {
+            self.db.query_row(
+                "SELECT COUNT(*) FROM emails WHERE folder = ?1 AND is_read = 0",
+                params![f],
+                |row| row.get(0),
+            ).map_err(|e| format!("Failed to count unread: {}", e))?
+        } else {
+            self.db.query_row(
+                "SELECT COUNT(*) FROM emails WHERE is_read = 0",
+                [],
+                |row| row.get(0),
+            ).map_err(|e| format!("Failed to count unread: {}", e))?
+        };
+
+        Ok(count)
+    }
+
+    /// Get list of all folders
+    pub fn get_folders(&self) -> Result<Vec<String>, String> {
+        let mut stmt = self.db.prepare(
+            "SELECT DISTINCT folder FROM emails ORDER BY folder"
+        ).map_err(|e| format!("Failed to prepare query: {}", e))?;
+
+        let rows = stmt.query_map([], |row| {
+            row.get::<_, String>(0)
+        }).map_err(|e| format!("Failed to query folders: {}", e))?;
+
+        let mut folders = Vec::new();
+        for row in rows {
+            folders.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        }
+
+        Ok(folders)
+    }
+
+    /// Update email flags (seen, flagged)
+    pub fn update_email_flags(&self, folder: &str, uid: u32, seen: bool, flagged: Option<bool>) -> Result<(), String> {
+        if let Some(f) = flagged {
+            self.db.execute(
+                "UPDATE emails SET is_read = ?1 WHERE folder = ?2 AND uid = ?3",
+                params![seen as i32, folder, uid],
+            ).map_err(|e| format!("Failed to update flags: {}", e))?;
+            // Note: We don't have a flagged column yet, would need to add it
+        } else {
+            self.db.execute(
+                "UPDATE emails SET is_read = ?1 WHERE folder = ?2 AND uid = ?3",
+                params![seen as i32, folder, uid],
+            ).map_err(|e| format!("Failed to update flags: {}", e))?;
+        }
+
+        Ok(())
+    }
 }
 
 fn parse_date_to_timestamp(date: &str) -> i64 {

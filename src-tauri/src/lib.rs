@@ -1559,6 +1559,7 @@ async fn categorize_emails_batch(account_id: String, folder: String) -> Result<u
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatContext {
+    account_id: Option<String>,
     email_uid: Option<u32>,
     folder: Option<String>,
     email_subject: Option<String>,
@@ -1567,14 +1568,21 @@ struct ChatContext {
 }
 
 #[tauri::command]
-async fn ai_chat(messages: Vec<ai::AIMessage>, context: Option<ChatContext>) -> Result<String, String> {
+async fn ai_chat(
+    state: State<'_, AppState>,
+    messages: Vec<ai::AIMessage>,
+    context: Option<ChatContext>,
+) -> Result<String, String> {
     let config = storage::load_ai_config()?;
     let provider = create_ai_provider(&config)?;
 
-    // Build system message with context
+    // Build system message with context and tools
     let mut all_messages = Vec::new();
 
-    let mut system_content = "Du bist ein hilfreicher E-Mail-Assistent. Du hilfst beim Verstehen, Beantworten und Organisieren von E-Mails. Antworte auf Deutsch.".to_string();
+    let mut system_content = "Du bist ein hilfreicher E-Mail-Assistent. Du hilfst beim Verstehen, Beantworten und Organisieren von E-Mails. Antworte auf Deutsch.\n\n".to_string();
+
+    // Add tools description
+    system_content.push_str(ai::get_tools_description());
 
     if let Some(ctx) = &context {
         if let Some(subject) = &ctx.email_subject {
@@ -1596,7 +1604,63 @@ async fn ai_chat(messages: Vec<ai::AIMessage>, context: Option<ChatContext>) -> 
 
     all_messages.extend(messages);
 
-    provider.complete(all_messages).await
+    // First completion - might include a tool call
+    let response = provider.complete(all_messages.clone()).await?;
+
+    // Check if response contains a tool call
+    if let Some(tool_call) = ai::parse_tool_call(&response) {
+        // Get account ID from context
+        let account_id = context
+            .as_ref()
+            .and_then(|c| c.account_id.clone())
+            .unwrap_or_default();
+
+        if account_id.is_empty() {
+            return Ok("Ich kann keine Aktionen ausführen ohne einen ausgewählten Account. Bitte wähle zuerst einen Account aus.".to_string());
+        }
+
+        // Execute the tool
+        let tool_result = ai::execute_tool(
+            &tool_call,
+            &account_id,
+            &state.imap_clients,
+        ).await;
+
+        // Build response with tool result
+        let tool_response = if tool_result.success {
+            format!(
+                "Tool '{}' ausgeführt. Ergebnis:\n```json\n{}\n```",
+                tool_call.name,
+                serde_json::to_string_pretty(&tool_result.data).unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Tool '{}' fehlgeschlagen: {}",
+                tool_call.name,
+                tool_result.error.unwrap_or_default()
+            )
+        };
+
+        // Add the tool call and result to messages
+        all_messages.push(ai::AIMessage {
+            role: "assistant".to_string(),
+            content: response.clone(),
+        });
+
+        all_messages.push(ai::AIMessage {
+            role: "user".to_string(),
+            content: format!("Tool-Ergebnis: {}", tool_response),
+        });
+
+        // Get final response from AI
+        let final_response = provider.complete(all_messages).await?;
+
+        // Return the combined response
+        Ok(format!("{}\n\n{}", tool_response, final_response))
+    } else {
+        // No tool call, return response directly
+        Ok(response)
+    }
 }
 
 #[tauri::command]
