@@ -13,6 +13,8 @@ interface Props {
   onInsertReply?: (text: string) => void;
   categories?: EmailCategory[];
   onCategoryChange?: (categoryId: string) => void;
+  onMarkSpam?: (uid: number) => Promise<void>;
+  onMarkNotSpam?: (uid: number) => Promise<void>;
 }
 
 function AIChatPanel({
@@ -24,12 +26,21 @@ function AIChatPanel({
   onInsertReply,
   categories = [],
   onCategoryChange,
+  onMarkSpam,
+  onMarkNotSpam,
 }: Props) {
   const { t } = useTranslation();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [markingSpam, setMarkingSpam] = useState(false);
+
+  // Check if current folder is a spam folder
+  const isSpamFolder = folder.toLowerCase() === "spam" ||
+    folder.toLowerCase() === "junk" ||
+    folder.toLowerCase().includes("spam") ||
+    folder.toLowerCase().includes("junk");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -243,6 +254,62 @@ function AIChatPanel({
               <span>⚡</span> {t("ai.actions.replyBrief", "Brief Reply")}
             </button>
           </div>
+
+          {/* Spam Actions */}
+          {(onMarkSpam || onMarkNotSpam) && (
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {!isSpamFolder && onMarkSpam && (
+                <button
+                  onClick={async () => {
+                    if (!currentEmail) return;
+                    setMarkingSpam(true);
+                    try {
+                      await onMarkSpam(currentEmail.uid);
+                    } catch (e) {
+                      setError(String(e));
+                    } finally {
+                      setMarkingSpam(false);
+                    }
+                  }}
+                  disabled={isLoading || markingSpam}
+                  className="px-2 py-1.5 text-xs bg-red-50 border border-red-200 text-red-700 rounded hover:bg-red-100 disabled:opacity-50 flex items-center justify-center gap-1"
+                >
+                  {markingSpam ? (
+                    <div className="w-3 h-3 border-2 border-red-300 border-t-red-600 rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <span>🚫</span> {t("ai.actions.markSpam", "Spam")}
+                    </>
+                  )}
+                </button>
+              )}
+              {isSpamFolder && onMarkNotSpam && (
+                <button
+                  onClick={async () => {
+                    if (!currentEmail) return;
+                    setMarkingSpam(true);
+                    try {
+                      await onMarkNotSpam(currentEmail.uid);
+                    } catch (e) {
+                      setError(String(e));
+                    } finally {
+                      setMarkingSpam(false);
+                    }
+                  }}
+                  disabled={isLoading || markingSpam}
+                  className="px-2 py-1.5 text-xs bg-green-50 border border-green-200 text-green-700 rounded hover:bg-green-100 disabled:opacity-50 flex items-center justify-center gap-1 col-span-2"
+                >
+                  {markingSpam ? (
+                    <div className="w-3 h-3 border-2 border-green-300 border-t-green-600 rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <span>✅</span> {t("ai.actions.markNotSpam", "Not Spam")}
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Category Change */}
           {categories.length > 0 && onCategoryChange && (

@@ -1272,6 +1272,57 @@ function App() {
     }
   };
 
+  // Mark single email as spam (from AI panel) - moves to spam folder
+  const handleMarkAsSpam = async (uid: number) => {
+    if (!activeAccountId) return;
+
+    // Find spam folder
+    const spamFolder = folders.find(f =>
+      f.name.toLowerCase() === "spam" ||
+      f.name.toLowerCase() === "junk" ||
+      f.name.toLowerCase() === "[gmail]/spam"
+    )?.name || "Spam";
+
+    // Move to spam
+    await invoke("move_email", {
+      accountId: activeAccountId,
+      folder: selectedFolder,
+      uid,
+      targetFolder: spamFolder,
+    });
+
+    // Update local state
+    setEmails((prev) => prev.filter((e) => e.uid !== uid));
+    if (selectedEmail?.uid === uid) {
+      setSelectedEmail(null);
+    }
+  };
+
+  // Mark single email as not spam (from AI panel) - moves to inbox
+  const handleMarkAsNotSpam = async (uid: number) => {
+    if (!activeAccountId) return;
+
+    // Find inbox folder
+    const inboxFolder = folders.find(f =>
+      f.name.toLowerCase() === "inbox" ||
+      f.name === "INBOX"
+    )?.name || "INBOX";
+
+    // Move to inbox
+    await invoke("move_email", {
+      accountId: activeAccountId,
+      folder: selectedFolder,
+      uid,
+      targetFolder: inboxFolder,
+    });
+
+    // Update local state
+    setEmails((prev) => prev.filter((e) => e.uid !== uid));
+    if (selectedEmail?.uid === uid) {
+      setSelectedEmail(null);
+    }
+  };
+
   // Folder management
   const handleCreateFolder = async (name: string) => {
     if (!activeAccountId) return;
@@ -2013,6 +2064,8 @@ function App() {
                         handleSetEmailCategory(selectedEmail.uid, categoryId);
                       }
                     }}
+                    onMarkSpam={handleMarkAsSpam}
+                    onMarkNotSpam={handleMarkAsNotSpam}
                   />
                 </>
               ) : emailSubView === "compose" ? (

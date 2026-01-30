@@ -409,7 +409,9 @@
       "replyFormal": "Formelle Antwort",
       "replyFriendly": "Freundliche Antwort",
       "replyBrief": "Kurze Antwort",
-      "changeCategory": "Kategorie ändern..."
+      "changeCategory": "Kategorie ändern...",
+      "markSpam": "Spam",
+      "markNotSpam": "Kein Spam"
     }
   },
   "spam": {

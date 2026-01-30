@@ -409,7 +409,9 @@
       "replyFormal": "Formal Reply",
       "replyFriendly": "Friendly Reply",
       "replyBrief": "Brief Reply",
-      "changeCategory": "Change category..."
+      "changeCategory": "Change category...",
+      "markSpam": "Spam",
+      "markNotSpam": "Not Spam"
     }
   },
   "spam": {
