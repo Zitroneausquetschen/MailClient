@@ -1,6 +1,6 @@
 [package]
 name = "mailclient"
-version = "0.3.4"
+version = "0.3.5"
 description = "E-Mail Client für MailCow"
 authors = [""]
 edition = "2021"
